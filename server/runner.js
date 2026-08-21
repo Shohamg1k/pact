@@ -81,9 +81,12 @@ export function injectPortEnv(code) {
   return code.replace(/\.listen\(\s*(\d+)/, '.listen(process.env.PACT_RUNNER_PORT || $1');
 }
 
-/** Rewrites a hardcoded `mongoose.connect('...'` literal to prefer MONGO_URI. */
+/** Rewrites a hardcoded `mongoose.connect('...'` literal to prefer the injected env var.
+ * prompts/backend.md mandates MONGO_URL, but older artifacts (and models that ignore the
+ * rule) emit MONGO_URI or a bare literal — startPreviewServer sets every spelling, and this
+ * rewrite covers the bare-literal case so a stale manifest still boots. */
 export function injectMongoUri(code) {
-  return code.replace(/mongoose\.connect\(\s*(['"`])([^'"`]*)\1/, 'mongoose.connect(process.env.MONGO_URI || $1$2$1');
+  return code.replace(/mongoose\.connect\(\s*(['"`])([^'"`]*)\1/, 'mongoose.connect(process.env.MONGO_URL || process.env.MONGO_URI || $1$2$1');
 }
 
 /** Best-effort: which manifest module's path is mentioned in this stderr/error text? Used
@@ -353,6 +356,7 @@ export async function runBootCheck(generatedDir, contract, manifest, opts = {}) 
   const handle = startServerProcess(generatedDir, manifest, {
     PORT: String(port),
     PACT_RUNNER_PORT: String(port),
+    MONGO_URL: mongo.uri,
     MONGO_URI: mongo.uri,
     MONGODB_URI: mongo.uri,
   });
@@ -402,6 +406,7 @@ export async function startPreviewServer(generatedDir, contract, manifest, opts 
   const handle = startServerProcess(generatedDir, manifest, {
     PORT: String(port),
     PACT_RUNNER_PORT: String(port),
+    MONGO_URL: mongo.uri,
     MONGO_URI: mongo.uri,
     MONGODB_URI: mongo.uri,
   });
