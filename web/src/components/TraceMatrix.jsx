@@ -5,20 +5,20 @@ import { getTrace } from '../api.js';
 // shape from server/trace.js: {rows:[{contractItem,kind,model,route,test,status:'OK'|'GAP'}],
 // reverse, gaps}. Older runs (or a run that hasn't reached agent2 yet) still report
 // {rows: [], reverse: {}} — handled below, not treated as an error.
-export default function TraceMatrix({ runId, refreshKey, onJumpToFile }) {
+export default function TraceMatrix({ chatId, refreshKey, onJumpToFile }) {
   const [trace, setTrace] = useState(null);
 
-  // Refetches on refreshKey change (App.jsx passes gateV2's phase status) so a panel opened
-  // before trace.json is written doesn't stay stuck on the empty-state message forever.
+  // Refetches on refreshKey change so a panel opened before trace.json is written
+  // doesn't stay stuck on the empty-state message forever.
   useEffect(() => {
     let cancelled = false;
-    getTrace(runId).then((t) => {
+    getTrace(chatId).then((t) => {
       if (!cancelled) setTrace(t);
     });
     return () => {
       cancelled = true;
     };
-  }, [runId, refreshKey]);
+  }, [chatId, refreshKey]);
 
   if (!trace) return <div className="empty-state">loading…</div>;
 
@@ -34,9 +34,9 @@ export default function TraceMatrix({ runId, refreshKey, onJumpToFile }) {
       )}
       {rows.length === 0 ? (
         <div className="gap-notice">
-          trace.json is empty for this run — either Agent 2 hasn't reached Gate V2 yet, or
-          this run predates trace.js landing. Computed deterministically from the contract +
-          manifest (VER-5); this table renders live once rows[] populate.
+          trace.json is empty for this chat — the Architect hasn't produced a contract yet
+          (nothing else can be traced against). Computed deterministically from the contract
+          + whatever roles have run (VER-5); this table renders live once rows[] populate.
         </div>
       ) : (
         <div style={{ overflowX: 'auto' }}>
@@ -53,11 +53,13 @@ export default function TraceMatrix({ runId, refreshKey, onJumpToFile }) {
             </thead>
             <tbody>
               {rows.map((r, i) => {
-                // `model` holds the implementing file path(s), comma-joined (trace.js) —
-                // that's what "jump to file" means; `route` is METHOD /path, not a file.
-                const firstFile = r.model?.split(',')[0]?.trim();
+                // `model` holds "role:path" citations, comma-joined (trace.js) — jumping
+                // needs BOTH which role's code viewer to open and which file within it.
+                const first = r.model?.split(',')[0]?.trim();
+                const [firstRole, firstPath] = first?.includes(':') ? first.split(/:(.+)/) : [null, first];
+                const jumpable = firstRole === 'backend' || firstRole === 'frontend';
                 return (
-                  <tr key={i} onClick={() => firstFile && onJumpToFile?.(firstFile)}>
+                  <tr key={i} onClick={() => jumpable && onJumpToFile?.(firstRole, firstPath)}>
                     <td>{r.contractItem}</td>
                     <td>{r.kind}</td>
                     <td>{r.model ?? '—'}</td>

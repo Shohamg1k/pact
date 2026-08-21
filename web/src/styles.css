@@ -1,4 +1,4 @@
-/* PACT run theatre — hand-rolled CSS, no component library (PRD §5, §17 non-goal: not an IDE). */
+/* PACT — hand-rolled CSS, no component library (PRD §5, §17 non-goal: not an IDE). */
 
 :root {
   --bg: #0b0e14;
@@ -39,43 +39,126 @@ html, body {
 
 a { color: var(--accent); }
 
-.app-shell {
-  max-width: 1180px;
-  margin: 0 auto;
-  padding: 20px 24px 80px;
+/* ---- App shell: sidebar + main (Claude-style) ---- */
+.app-shell-layout {
+  display: flex;
+  min-height: 100vh;
 }
 
-.app-header {
+.app-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 0 20px;
+  padding: 14px 24px;
   border-bottom: 1px solid var(--border-soft);
-  margin-bottom: 20px;
 }
 
-.brand {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-}
-
-.brand h1 {
-  font-size: 20px;
-  margin: 0;
-  letter-spacing: 0.02em;
-}
-
-.brand .tagline {
+.tagline {
   color: var(--text-faint);
   font-size: 12px;
 }
 
-.header-actions {
-  display: flex;
-  gap: 8px;
-  align-items: center;
+.app-content {
+  flex: 1;
+  max-width: 1100px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 20px 24px 80px;
 }
+
+/* ---- Sidebar ---- */
+.sidebar {
+  width: 260px;
+  flex-shrink: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--border-soft);
+  display: flex;
+  flex-direction: column;
+  padding: 16px 12px;
+  gap: 10px;
+}
+
+.sidebar-brand {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  padding: 4px 8px 8px;
+}
+
+.sidebar-new, .sidebar-new-secondary {
+  width: 100%;
+  text-align: left;
+}
+
+.sidebar-chats {
+  flex: 1;
+  overflow-y: auto;
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sidebar-project-name {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+  padding: 4px 8px;
+}
+.sidebar-project-name.faint { opacity: 0.7; }
+
+.sidebar-chat-row {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  padding: 7px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sidebar-chat-row:hover { background: var(--surface-2); color: var(--text); }
+.sidebar-chat-row.active { background: var(--accent-dim); color: var(--text); }
+
+.sidebar-empty {
+  color: var(--text-faint);
+  font-size: 12px;
+  padding: 8px;
+}
+
+.sidebar-nav {
+  border-top: 1px solid var(--border-soft);
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sidebar-nav-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  padding: 7px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+.sidebar-nav-item:hover { background: var(--surface-2); color: var(--text); }
+.sidebar-nav-item.active { background: var(--surface-2); color: var(--accent); }
 
 button {
   font-family: inherit;
@@ -160,55 +243,119 @@ button {
   border-top: 1px solid var(--border-soft);
 }
 
-.brief-form textarea {
-  width: 100%;
+/* ---- Home page composer ---- */
+.home-page {
+  max-width: 720px;
+  margin: 60px auto 0;
+  text-align: center;
+}
+.home-page h1 { font-size: 26px; margin-bottom: 8px; }
+.home-page .tagline { display: block; margin-bottom: 24px; font-size: 13px; }
+
+.composer {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  text-align: left;
+}
+.composer textarea {
+  flex: 1;
   background: var(--surface-2);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 12px;
+  border-radius: 10px;
+  padding: 14px;
   font-size: 14px;
   font-family: var(--sans);
   resize: vertical;
   min-height: 90px;
 }
-.brief-form textarea:focus { outline: none; border-color: var(--accent); }
+.composer textarea:focus { outline: none; border-color: var(--accent); }
 
-.brief-form-row {
-  display: flex;
-  gap: 10px;
-  margin-top: 10px;
-  align-items: center;
-  flex-wrap: wrap;
+/* ---- Chat bubble (the brief) ---- */
+.chat-bubble {
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-bottom: 18px;
+  white-space: pre-wrap;
+}
+.chat-bubble-meta {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+  margin-bottom: 6px;
 }
 
-.brief-form input[type=text] {
+/* ---- Agent selector ---- */
+.agent-selector { margin: 16px 0; }
+.agent-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.agent-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+  position: relative;
+}
+.agent-card input { position: absolute; top: 10px; right: 10px; }
+.agent-card.checked { border-color: var(--accent); background: var(--accent-dim); }
+.agent-card.done { border-color: var(--success-dim); }
+.agent-card.disabled { opacity: 0.5; cursor: not-allowed; }
+.agent-name { font-size: 13px; font-weight: 600; padding-right: 20px; }
+.agent-requires { font-size: 11px; color: var(--text-faint); }
+.badge.small { font-size: 10px; padding: 2px 6px; }
+
+/* ---- Mini card grid (PM personas) ---- */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px;
+}
+.mini-card {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.mini-card-title { font-size: 13px; font-weight: 600; margin-bottom: 4px; display: flex; gap: 8px; align-items: center; }
+.mini-card-body { font-size: 12px; color: var(--text-dim); }
+
+/* ---- Markdown (Docs viewer) ---- */
+.markdown-body { font-size: 13px; line-height: 1.6; }
+.markdown-body h1 { font-size: 19px; margin: 18px 0 8px; }
+.markdown-body h2 { font-size: 16px; margin: 16px 0 6px; }
+.markdown-body h3, .markdown-body h4 { font-size: 14px; margin: 12px 0 6px; }
+.markdown-body p { margin: 6px 0; color: var(--text-dim); }
+.markdown-body code { font-family: var(--mono); background: var(--surface-3); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+.markdown-body ul { margin: 6px 0; padding-left: 20px; color: var(--text-dim); }
+
+/* ---- Stub pages ---- */
+.stub-page { max-width: 600px; }
+.stub-page h2 { margin-bottom: 6px; }
+.stub-page p { color: var(--text-dim); font-size: 13px; margin-bottom: 14px; }
+
+.checkbox-row { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); }
+.modal-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+.modal-row select, .modal-row input[type=text] {
   background: var(--surface-2);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 7px 10px;
   font-size: 13px;
-  flex: 1;
-  min-width: 160px;
 }
-
-.mode-toggle {
-  display: flex;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  overflow: hidden;
-}
-.mode-toggle button {
-  background: var(--surface-2);
-  color: var(--text-dim);
-  border: none;
-  padding: 7px 12px;
-  font-size: 12px;
-}
-.mode-toggle button.active { background: var(--accent-dim); color: var(--text); }
-
-.char-count { font-size: 11px; color: var(--text-faint); margin-left: auto; }
+.mono { font-family: var(--mono); }
 
 /* ---- Pipeline strip (UI-1) ---- */
 .pipeline-strip {
@@ -607,3 +754,5 @@ table.trace-table tr:hover td { background: var(--surface-2); cursor: pointer; }
 .stat { display: flex; flex-direction: column; }
 .stat .v { font-size: 18px; font-weight: 700; font-family: var(--mono); }
 .stat .l { font-size: 10px; color: var(--text-faint); text-transform: uppercase; }
+
+.chat-page { padding-top: 4px; }

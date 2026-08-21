@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { getArtifact } from '../api.js';
+import { getArtifact, getFile, getJobFile } from '../api.js';
 import { sha256Hex } from '../lib/hash.js';
 
-// UI-2: the real .pact/ files with a sha256 badge, and a "diff against Agent 2's pack"
-// button that proves byte-identity on stage (CORE-4, T2/T3 acceptance criteria).
+// The architect's contract + its derived files, with a sha256 badge and a "diff against
+// Backend's pack" button that proves byte-identity on stage (CORE-4).
 const FILES = [
   { key: 'architecture.json', label: 'architecture.json' },
   { key: 'openapi.yaml', label: 'openapi.yaml' },
@@ -11,68 +11,64 @@ const FILES = [
   { key: 'decisions.md', label: 'decisions.md' },
 ];
 
-export default function SpecViewer({ runId, refreshKey, contractHash }) {
+export default function SpecViewer({ chatId, refreshKey, contractHash, backendJobId }) {
   const [active, setActive] = useState('architecture.json');
   const [content, setContent] = useState(null);
   const [loading, setLoading] = useState(false);
   const [localHash, setLocalHash] = useState(null);
-  const [diff, setDiff] = useState(null); // null | 'checking' | {status:'match'|'mismatch'|'unknown', detail}
+  const [diff, setDiff] = useState(null); // null | 'checking' | {status, detail, briefLeak}
 
-  // Refetches on refreshKey change (App.jsx passes gateV1's phase status) so a panel opened
-  // before architecture.json is written doesn't stay stuck on "not written yet" forever.
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setContent(null);
-    getArtifact(runId, active).then(async (text) => {
+    const load = active === 'architecture.json' ? getArtifact(chatId, 'architect').then((o) => (o ? JSON.stringify(o, null, 2) : null)) : getFile(chatId, active);
+    load.then(async (text) => {
       if (cancelled) return;
       setContent(text);
       setLoading(false);
-      if (active === 'architecture.json' && text) {
-        setLocalHash(await sha256Hex(text));
-      }
+      if (active === 'architecture.json' && text) setLocalHash(await sha256Hex(text));
     });
     return () => {
       cancelled = true;
     };
-  }, [runId, active, refreshKey]);
+  }, [chatId, active, refreshKey]);
 
   async function runDiff() {
     setDiff('checking');
-    const [archText, packText] = await Promise.all([
-      getArtifact(runId, 'architecture.json'),
-      getArtifact(runId, 'packs/agent2.txt'),
-    ]);
-    const briefText = await getArtifact(runId, 'requirement.md');
+    const archObj = await getArtifact(chatId, 'architect');
+    const archText = archObj ? JSON.stringify(archObj, null, 2) : null;
 
     if (!archText) {
-      setDiff({ status: 'unknown', detail: 'architecture.json not written yet — Gate V1 has not passed.' });
+      setDiff({ status: 'unknown', detail: "architect hasn't produced a contract yet." });
       return;
     }
+    if (!backendJobId) {
+      setDiff({ status: 'unknown', detail: "Backend hasn't run for this chat yet." });
+      return;
+    }
+    const packText = await getJobFile(chatId, backendJobId, 'pack-attempt-0.txt');
     if (!packText) {
-      setDiff({
-        status: 'unknown',
-        detail: "packs/agent2.txt doesn't exist yet — Agent 2 (Backend Engineer) hasn't run for this run yet.",
-      });
+      setDiff({ status: 'unknown', detail: "Backend's pack isn't on disk (unexpected)." });
       return;
     }
+    const chat = await (await fetch(`/api/chats/${chatId}`)).json();
+    const briefText = chat?.chat?.brief ?? '';
 
     const byteIdentical = packText.includes(archText.trim()) || packText.includes(archText);
     const archHash = await sha256Hex(archText);
 
-    // T3: prove Agent 2's pack never contains a distinctive phrase from the brief (CORE-4).
     let briefLeak = null;
     if (briefText) {
-      const words = briefText.replace(/[^\w\s]/g, ' ').split(/\s+/).filter((w) => w.length >= 7);
-      const rareWord = words.find((w) => !packText.toLowerCase().includes(w.toLowerCase()));
-      briefLeak = words.some((w) => packText.toLowerCase().includes(w.toLowerCase()) && w.length >= 9);
+      const words = briefText.replace(/[^\w\s]/g, ' ').split(/\s+/).filter((w) => w.length >= 9);
+      briefLeak = words.some((w) => packText.toLowerCase().includes(w.toLowerCase()));
     }
 
     setDiff({
       status: byteIdentical ? 'match' : 'mismatch',
       detail: byteIdentical
-        ? `architecture.json (${archHash}) appears byte-identical inside packs/agent2.txt.`
-        : `architecture.json (${archHash}) was NOT found verbatim inside packs/agent2.txt — investigate drift.`,
+        ? `architect's contract (${archHash}) appears byte-identical inside Backend's pack.`
+        : `architect's contract (${archHash}) was NOT found verbatim inside Backend's pack — investigate drift.`,
       briefLeak,
     });
   }
@@ -80,7 +76,7 @@ export default function SpecViewer({ runId, refreshKey, contractHash }) {
   return (
     <div>
       <div className="hash-row">
-        <span className="badge mono">gateV1 contractHash: {contractHash ?? 'not yet'}</span>
+        <span className="badge mono">contractHash: {contractHash ?? 'not yet'}</span>
         {active === 'architecture.json' && localHash && (
           <span className={`badge ${localHash === contractHash ? 'ok' : 'bad'}`}>
             browser-computed: {localHash} {localHash === contractHash ? '✓ matches' : '✗ mismatch'}
@@ -94,15 +90,15 @@ export default function SpecViewer({ runId, refreshKey, contractHash }) {
           </button>
         ))}
         <button className="btn small" style={{ marginLeft: 'auto' }} onClick={runDiff}>
-          Diff against Agent 2's pack
+          Diff against Backend's pack
         </button>
       </div>
       {diff && diff !== 'checking' && (
         <div className={`diff-result ${diff.status}`}>
           {diff.status === 'match' ? '✓ ' : diff.status === 'mismatch' ? '✗ ' : '— '}
           {diff.detail}
-          {diff.briefLeak === false && <div>✓ no long word from requirement.md appears in the pack (brief isolation, T3).</div>}
-          {diff.briefLeak === true && <div>⚠ a long word from requirement.md appears in the pack — check for leakage.</div>}
+          {diff.briefLeak === false && <div>✓ no long word from the brief appears in the pack (brief isolation, T3).</div>}
+          {diff.briefLeak === true && <div>⚠ a long word from the brief appears in the pack — check for leakage.</div>}
         </div>
       )}
       {diff === 'checking' && <div className="diff-result unknown">checking…</div>}

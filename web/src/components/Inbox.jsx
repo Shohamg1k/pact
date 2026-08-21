@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { getArtifact, approveInboxItem, ackInboxItem, answerClarification } from '../api.js';
+import { getFile, approveInboxItem, ackInboxItem, answerClarification } from '../api.js';
 import { parseWorklog as parseJsonl } from '../lib/worklog.js';
 
 // UI-8: the single decision queue — clarifications, connector-write approvals, reviews.
@@ -8,14 +8,14 @@ import { parseWorklog as parseJsonl } from '../lib/worklog.js';
 // pending items the same way kernel/interrupts.js does. Approve/ack buttons call the P1/P2
 // routes from PRD §11 — built now, will 404 until server/index.js adds them (same honest-gap
 // treatment as UI-5).
-export default function Inbox({ runId, onAnswered }) {
+export default function Inbox({ chatId, onAnswered }) {
   const [items, setItems] = useState(null);
   const [answerDraft, setAnswerDraft] = useState({});
   const [busyId, setBusyId] = useState(null);
   const [notice, setNotice] = useState({});
 
   async function load() {
-    const text = await getArtifact(runId, 'inbox.jsonl');
+    const text = await getFile(chatId, 'inbox.jsonl');
     const entries = parseJsonl(text);
     const answeredIds = new Set(entries.filter((e) => e.type === 'clarification_answer').map((e) => e.id));
     const pending = entries.filter((e) => e.type === 'clarification' && !answeredIds.has(e.id) && e.status !== 'rejected');
@@ -31,13 +31,13 @@ export default function Inbox({ runId, onAnswered }) {
     load();
     const id = setInterval(load, 3000);
     return () => clearInterval(id);
-  }, [runId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [chatId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function submitClarification(item) {
     const answer = (answerDraft[item.id] ?? '').trim();
     if (!answer) return;
     setBusyId(item.id);
-    const res = await answerClarification(runId, item.id, answer);
+    const res = await answerClarification(chatId, item.id, answer);
     setBusyId(null);
     if (res.ok) {
       onAnswered?.();

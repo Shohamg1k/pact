@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { answerClarification } from '../api.js';
 
-// UI-6: the ONE clarifying question (CORE-6, §8.4). Answering resumes the run via the
-// LOCKED POST /api/runs/:id/answer route.
-export default function ClarificationPrompt({ runId, itemId, question, onAnswered }) {
+// UI-6: the ONE clarifying question (CORE-6, §8.4). Answering resumes the paused role
+// via the LOCKED POST /api/chats/:id/answer route.
+export default function ClarificationPrompt({ chatId, itemId, question, onAnswered }) {
   const [answer, setAnswer] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -13,7 +13,7 @@ export default function ClarificationPrompt({ runId, itemId, question, onAnswere
     if (!answer.trim() || busy) return;
     setBusy(true);
     setError(null);
-    const res = await answerClarification(runId, itemId, answer.trim());
+    const res = await answerClarification(chatId, itemId, answer.trim());
     setBusy(false);
     if (!res.ok) {
       setError(res.body?.detail ?? `failed (${res.status})`);
@@ -30,7 +30,7 @@ export default function ClarificationPrompt({ runId, itemId, question, onAnswere
         <textarea
           value={answer}
           onChange={(e) => setAnswer(e.target.value)}
-          placeholder="Your answer resumes Agent 1, which revises the contract and re-validates…"
+          placeholder="Your answer resumes the paused agent, which revises its output and re-validates…"
           disabled={busy}
         />
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>

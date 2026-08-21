@@ -5,7 +5,7 @@ import { requestPreview } from '../api.js';
 // POST /api/preview/:id/request belongs to feat/runner-connectors and doesn't exist yet.
 // This is the shell (method/path/body in, response out); it will 404 until that lands.
 // Say so plainly rather than hiding the failure.
-export default function PreviewConsole({ runId }) {
+export default function PreviewConsole({ chatId }) {
   const [method, setMethod] = useState('GET');
   const [path, setPath] = useState('/');
   const [body, setBody] = useState('');
@@ -23,7 +23,7 @@ export default function PreviewConsole({ runId }) {
       setBusy(false);
       return;
     }
-    const res = await requestPreview(runId, { method, path, body: parsedBody });
+    const res = await requestPreview(chatId, { method, path, body: parsedBody });
     setBusy(false);
     setResult(res);
   }
