@@ -1,0 +1,24 @@
+{
+  "name": "pact-repo",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Shohamg1k/pact.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Shohamg1k/pact/issues"
+  },
+  "homepage": "https://github.com/Shohamg1k/pact#readme",
+  "workspaces": [
+    "server",
+    "web"
+  ]
+}
