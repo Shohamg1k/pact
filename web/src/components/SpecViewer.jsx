@@ -11,13 +11,15 @@ const FILES = [
   { key: 'decisions.md', label: 'decisions.md' },
 ];
 
-export default function SpecViewer({ runId, contractHash }) {
+export default function SpecViewer({ runId, refreshKey, contractHash }) {
   const [active, setActive] = useState('architecture.json');
   const [content, setContent] = useState(null);
   const [loading, setLoading] = useState(false);
   const [localHash, setLocalHash] = useState(null);
   const [diff, setDiff] = useState(null); // null | 'checking' | {status:'match'|'mismatch'|'unknown', detail}
 
+  // Refetches on refreshKey change (App.jsx passes gateV1's phase status) so a panel opened
+  // before architecture.json is written doesn't stay stuck on "not written yet" forever.
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -33,7 +35,7 @@ export default function SpecViewer({ runId, contractHash }) {
     return () => {
       cancelled = true;
     };
-  }, [runId, active]);
+  }, [runId, active, refreshKey]);
 
   async function runDiff() {
     setDiff('checking');
@@ -50,7 +52,7 @@ export default function SpecViewer({ runId, contractHash }) {
     if (!packText) {
       setDiff({
         status: 'unknown',
-        detail: "packs/agent2.txt doesn't exist yet — Agent 2 is still a timed stub (feat/core-pipeline). This check will run for real once it lands.",
+        detail: "packs/agent2.txt doesn't exist yet — Agent 2 (Backend Engineer) hasn't run for this run yet.",
       });
       return;
     }

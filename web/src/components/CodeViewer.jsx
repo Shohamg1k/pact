@@ -1,25 +1,29 @@
 import React, { useEffect, useState } from 'react';
-import { getArtifact, getArtifactJSON } from '../api.js';
+import { getArtifactJSON } from '../api.js';
 
 // UI-3: generated tree; each file shows its implements:[...] stamp (§8.5 provenance).
-// backend.json is written by Agent 2 (server/agents/backend.js) — still a timed stub on
-// feat/core-pipeline, so this normalizes defensively and says so plainly when absent.
+// backend.json is Agent 2's manifest (server/schemas/backend.js, locked shape backend/v1):
+// { meta, modules: [{path, kind, implements, code, language}], server_entry, package_json,
+// gaps }. The module's full source lives in modules[].code — the tree, not the runner's
+// written-to-disk generated/ dir, is the source of truth here; feat/runner-connectors only
+// materializes those same bytes to disk for `npm install`/boot, it doesn't produce new ones.
 function normalizeManifest(raw) {
-  if (!raw) return null;
-  const files = raw.files ?? raw.manifest ?? (Array.isArray(raw) ? raw : null);
-  if (!Array.isArray(files)) return null;
-  return files.map((f) => ({
-    path: f.path ?? f.file ?? f.name ?? '(unnamed)',
-    implements: f.implements ?? f.implements_ids ?? [],
+  if (!raw?.modules || !Array.isArray(raw.modules)) return null;
+  return raw.modules.map((m) => ({
+    path: m.path,
+    kind: m.kind,
+    implements: m.implements ?? [],
+    code: m.code ?? '',
   }));
 }
 
-export default function CodeViewer({ runId, jumpTo, onJumped }) {
+export default function CodeViewer({ runId, refreshKey, jumpTo, onJumped }) {
   const [manifest, setManifest] = useState(undefined); // undefined = loading, null = absent
   const [active, setActive] = useState(null);
-  const [content, setContent] = useState(null);
-  const [contentLoading, setContentLoading] = useState(false);
 
+  // Refetches whenever refreshKey changes (App.jsx passes agent2's phase status) — not just
+  // on mount. Without this, a panel opened before Agent 2 commits backend.json would show
+  // "not written yet" forever, even after the real file lands (found via live testing).
   useEffect(() => {
     let cancelled = false;
     getArtifactJSON(runId, 'backend.json').then((raw) => {
@@ -29,7 +33,7 @@ export default function CodeViewer({ runId, jumpTo, onJumped }) {
     return () => {
       cancelled = true;
     };
-  }, [runId]);
+  }, [runId, refreshKey]);
 
   useEffect(() => {
     if (jumpTo) {
@@ -38,31 +42,14 @@ export default function CodeViewer({ runId, jumpTo, onJumped }) {
     }
   }, [jumpTo]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => {
-    if (!active) {
-      setContent(null);
-      return;
-    }
-    let cancelled = false;
-    setContentLoading(true);
-    getArtifact(runId, `generated/${active}`).then((text) => {
-      if (cancelled) return;
-      setContent(text);
-      setContentLoading(false);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [runId, active]);
-
   if (manifest === undefined) return <div className="empty-state">loading…</div>;
 
   if (manifest === null) {
     return (
       <div className="gap-notice">
-        backend.json not written yet — Agent 2 is currently a timed stub (feat/core-pipeline
-        lands the real file manifest + implements[] stamps). This viewer will populate
-        automatically once that lands; no UI change needed.
+        backend.json not written yet — either Agent 2 hasn't run, or this run predates
+        feat/core-pipeline's real Backend Engineer landing. This viewer populates
+        automatically once it exists; no UI change needed.
       </div>
     );
   }
@@ -70,6 +57,8 @@ export default function CodeViewer({ runId, jumpTo, onJumped }) {
   if (manifest.length === 0) {
     return <div className="empty-state">Agent 2 produced an empty manifest.</div>;
   }
+
+  const activeModule = manifest.find((f) => f.path === active);
 
   return (
     <div className="code-layout">
@@ -80,7 +69,9 @@ export default function CodeViewer({ runId, jumpTo, onJumped }) {
             className={`file-row ${active === f.path ? 'selected' : ''}`}
             onClick={() => setActive(f.path)}
           >
-            <div>{f.path}</div>
+            <div>
+              {f.path} <span style={{ color: 'var(--text-faint)' }}>· {f.kind}</span>
+            </div>
             <div className="implements">
               {f.implements.length === 0 && <span className="chip orphan">implements: [] (orphan)</span>}
               {f.implements.map((id) => (
@@ -93,12 +84,8 @@ export default function CodeViewer({ runId, jumpTo, onJumped }) {
         ))}
       </div>
       <div>
-        {!active && <div className="empty-state">Select a file to view its contents.</div>}
-        {active && contentLoading && <div className="empty-state">loading…</div>}
-        {active && !contentLoading && content === null && (
-          <div className="empty-state">generated/{active} not readable (not written to disk yet).</div>
-        )}
-        {active && !contentLoading && content !== null && <pre className="code-block">{content}</pre>}
+        {!activeModule && <div className="empty-state">Select a file to view its contents.</div>}
+        {activeModule && <pre className="code-block">{activeModule.code}</pre>}
       </div>
     </div>
   );

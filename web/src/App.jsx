@@ -90,6 +90,7 @@ export default function App() {
   const phases = run?.phases ?? blankPhases();
   const chips = useMemo(() => chipsByPhase(worklog), [worklog]);
   const gateV1 = phases.find((p) => p.name === 'gateV1');
+  const gateV2 = phases.find((p) => p.name === 'gateV2');
   const agent1 = phases.find((p) => p.name === 'agent1');
   const agent2 = phases.find((p) => p.name === 'agent2');
   const { isTerminal, label: statusLabel } = deriveStatus(run, phases);
@@ -159,15 +160,15 @@ export default function App() {
           )}
 
           <Panel title="Spec viewer" defaultOpen={gateV1?.status === 'passed'}>
-            <SpecViewer runId={runId} contractHash={gateV1?.contractHash} />
+            <SpecViewer runId={runId} refreshKey={gateV1?.status} contractHash={gateV1?.contractHash} />
           </Panel>
 
           <Panel title="Code viewer" defaultOpen={agent2?.status === 'passed'}>
-            <CodeViewer runId={runId} jumpTo={jumpToFile} onJumped={() => setJumpToFile(null)} />
+            <CodeViewer runId={runId} refreshKey={agent2?.status} jumpTo={jumpToFile} onJumped={() => setJumpToFile(null)} />
           </Panel>
 
           <Panel title="Trace matrix" defaultOpen={agent2?.status === 'passed'}>
-            <TraceMatrix runId={runId} onJumpToFile={setJumpToFile} />
+            <TraceMatrix runId={runId} refreshKey={gateV2?.status} onJumpToFile={setJumpToFile} />
           </Panel>
 
           <Panel title="Preview console" defaultOpen={isTerminal}>

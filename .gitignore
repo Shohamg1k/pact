@@ -4,3 +4,4 @@ node_modules/
 .env
 *.log
 dist/
+.claude/scheduled_tasks.lock
