@@ -159,7 +159,9 @@ app.get('/api/chats/:id/trace', async (req, res) => {
 // agent-selector without duplicating the DAG check client-side.
 app.get('/api/agents', async (_req, res) => {
   res.json({
-    roles: ROLE_IDS.map((id) => ({ id, label: ROLE_LABELS[id], requires: ROLE_GRAPH[id].requires })),
+    // `reads` is what a role's pack is ALLOWED to contain — the UI's provenance check
+    // verifies each pack against exactly this, so the rule and its proof share one source.
+    roles: ROLE_IDS.map((id) => ({ id, label: ROLE_LABELS[id], requires: ROLE_GRAPH[id].requires, reads: ROLE_GRAPH[id].reads })),
   });
 });
 app.get('/api/chats/:id/agents', async (req, res) => {
