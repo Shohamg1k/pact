@@ -8,6 +8,23 @@ import { parseWorklog as parseJsonl } from '../lib/worklog.js';
 // pending items the same way kernel/interrupts.js does. Approve/ack buttons call the P1/P2
 // routes from PRD §11 — built now, will 404 until server/index.js adds them (same honest-gap
 // treatment as UI-5).
+const TYPE_LABEL = {
+  clarification: 'Question for you',
+  connector_write: 'Export approval',
+  review: 'Review',
+};
+const CONNECTOR_LABEL = { postman: 'Postman / OpenAPI', github: 'a GitHub pull request', miro: 'a Miro board', slack: 'Slack' };
+
+/** An ISO timestamp is not information a human wants to parse. */
+function relTime(iso) {
+  if (!iso) return '';
+  const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const h = Math.round(mins / 60);
+  return h < 24 ? `${h}h ago` : `${Math.round(h / 24)}d ago`;
+}
+
 export default function Inbox({ chatId, onAnswered }) {
   const [items, setItems] = useState(null);
   const [answerDraft, setAnswerDraft] = useState({});
@@ -69,7 +86,7 @@ export default function Inbox({ chatId, onAnswered }) {
       {items.map((item) => (
         <div key={item.id} className="inbox-item">
           <div style={{ flex: 1 }}>
-            <div className="type-tag">{item.type}{item.tainted ? ' · tainted' : ''}</div>
+            <div className="type-tag">{TYPE_LABEL[item.type] ?? item.type}{item.tainted ? ' · tainted' : ''}</div>
             {item.type === 'clarification' ? (
               <>
                 <div>{item.payload?.question}</div>
@@ -81,11 +98,26 @@ export default function Inbox({ chatId, onAnswered }) {
                   placeholder="answer…"
                 />
               </>
+            ) : item.type === 'connector_write' ? (
+              <div>
+                Export to <strong>{CONNECTOR_LABEL[item.payload?.connector] ?? item.payload?.connector}</strong> is waiting
+                for approval. Nothing is sent anywhere until you approve it (SEC-1).
+              </div>
             ) : (
-              <div>{JSON.stringify(item.payload ?? item)}</div>
+              // Unknown future item types still have to render as something a human can
+              // read, so fall back to labelled fields rather than a JSON blob.
+              <div>
+                {Object.entries(item.payload ?? {}).map(([k, v]) => (
+                  <div key={k} className="kv">
+                    <span className="kv-k">{k}</span>
+                    <span className="kv-v">{typeof v === 'object' ? JSON.stringify(v) : String(v)}</span>
+                  </div>
+                ))}
+              </div>
             )}
             <div className="meta">
-              round {item.round ?? 0} · {item.createdAt ?? ''}
+              {item.type === 'clarification' && `round ${(item.round ?? 0) + 1} of 2 · `}
+              {relTime(item.createdAt)}
             </div>
             {notice[item.id] && <div className="meta">{notice[item.id]}</div>}
           </div>
