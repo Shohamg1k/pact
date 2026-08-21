@@ -60,7 +60,12 @@ async function checkExternal(f, tool) {
       ? { cmd: 'py', args: ['-m', 'py_compile', file] }
       : { cmd: 'javac', args: ['-proc:none', '-d', dir, file] };
     const err = await new Promise((resolve) => {
-      const p = spawn(spec.cmd, spec.args, { shell: true });
+      // shell:false is required here so a missing toolchain surfaces as a genuine
+      // ENOENT on the 'error' event (-> skip). Under shell:true, cmd.exe/sh instead
+      // runs the shell, prints "not recognized"/"command not found" to stderr, and
+      // exits non-zero — which this function was misreading as a real compile error,
+      // failing a syntactically valid file whenever the toolchain simply isn't installed.
+      const p = spawn(spec.cmd, spec.args, { shell: false });
       let e = '';
       const t = setTimeout(() => { p.kill(); resolve(null); }, 20_000);
       p.stderr.on('data', (d) => (e += d));
