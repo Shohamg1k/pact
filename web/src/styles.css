@@ -648,17 +648,57 @@ table.grid tr:hover td, table.trace-table tr:hover td { background: var(--hover)
 /* ============================ diagram ============================ */
 
 .diagram-wrap { height: 100%; display: flex; flex-direction: column; min-height: 0; }
-.diagram-canvas { flex: 1; overflow: auto; background: var(--deep); min-height: 0; }
-.diagram-legend {
-  display: flex; gap: 12px; flex-wrap: wrap; align-items: center;
-  padding: 8px 14px; border-top: 1px solid var(--border-soft);
-  background: var(--bg); font-size: 11px; color: var(--text-faint);
-  line-height: 1.5;
+.diagram-toolbar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 12px; border-bottom: 1px solid var(--border-soft);
+  background: var(--bg); flex-shrink: 0;
 }
-.diagram-legend .legend-note { flex-basis: 100%; opacity: 0.8; }
+.diagram-body { flex: 1; display: flex; min-height: 0; }
+.diagram-canvas { flex: 1; overflow: auto; background: var(--deep); min-height: 0; }
+.diagram-canvas svg { display: block; }
+.dg-node { cursor: pointer; }
+.dg-node:hover rect:first-of-type { filter: brightness(1.35); }
+
+/* Detail panel — what the selected component does, and what it talks to. */
+.diagram-detail {
+  width: 268px; flex-shrink: 0;
+  border-left: 1px solid var(--border-soft);
+  background: var(--bg);
+  overflow-y: auto;
+  padding: 12px 14px 20px;
+}
+.dd-head { display: flex; align-items: flex-start; gap: 9px; margin-bottom: 10px; }
+.dd-title { font-size: 13.5px; font-weight: 600; color: var(--text-bright); line-height: 1.3; }
+.dd-sub { font-size: 11px; color: var(--text-faint); margin-top: 2px; }
+.dd-body {
+  font-size: 12.5px; line-height: 1.65; color: var(--text-dim);
+  margin: 0; white-space: pre-wrap; word-break: break-word;
+}
+.dd-body.dim { color: var(--text-faint); font-style: italic; }
+.dd-edge {
+  display: flex; gap: 8px; align-items: flex-start;
+  width: 100%; text-align: left;
+  padding: 7px 8px; border-radius: 6px; margin-bottom: 3px;
+}
+.dd-edge:hover { background: var(--hover); }
+.dd-dir { font-size: 13px; flex-shrink: 0; line-height: 1.35; }
+.dd-edge-main { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.dd-edge-name { font-size: 12.5px; color: var(--text); }
+.dd-edge-meta { font-size: 10.5px; color: var(--text-faint); }
+.dd-edge-desc { font-size: 11px; color: var(--text-dim); margin-top: 3px; line-height: 1.5; }
+
+.diagram-legend {
+  display: flex; gap: 13px; flex-wrap: wrap; align-items: center;
+  padding: 8px 14px; border-top: 1px solid var(--border-soft);
+  background: var(--bg); font-size: 11px; color: var(--text-faint); line-height: 1.5;
+  flex-shrink: 0;
+}
 .legend-key { display: flex; align-items: center; gap: 6px; }
 .legend-swatch { width: 10px; height: 10px; border-radius: 3px; }
-.node-box:hover .node-rect { filter: brightness(1.28); }
+.legend-dash {
+  width: 14px; height: 0; border-top: 1.5px dashed var(--text-faint); display: inline-block;
+}
+.legend-note { flex-basis: 100%; opacity: 0.75; }
 .diagram-empty { padding: 36px; color: var(--text-faint); text-align: center; }
 
 /* ============================ live preview ============================ */

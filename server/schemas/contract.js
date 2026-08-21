@@ -33,6 +33,48 @@ export const ApiSchema = z.object({
   rules: z.array(z.string()).default([]),
 });
 
+// --- High-level system diagram (optional) ---------------------------------------
+// The Architect draws the system, rather than the UI guessing at it from endpoints: a
+// picture of runtime topology (clients, services, datastores, external systems) is a
+// different thing from the feature/API list, and only the Architect knows it. Kept
+// OPTIONAL so every contract written before this existed still validates — the UI falls
+// back to deriving a diagram from features/APIs/collections when it's absent.
+export const DiagramGroupSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  sublabel: z.string().optional(),
+  parent: z.string().optional(), // groups nest, e.g. a subaccount inside a platform
+  lane: z.enum(['left', 'main', 'right']).default('main'), // actors | system | external
+});
+
+export const DiagramNodeSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  sublabel: z.string().optional(),
+  group: z.string().optional(),
+  // A technology glyph, not a vendor logo — see web/src/tabs/diagramIcons.jsx.
+  icon: z.string().default('service'),
+  /** What this component does and how it works — shown when the node is clicked. */
+  description: z.string().default(''),
+  /** Contract ids this component realises, so the picture ties back to the spec. */
+  implements: z.array(z.string()).default([]),
+});
+
+export const DiagramEdgeSchema = z.object({
+  from: z.string(),
+  to: z.string(),
+  label: z.string().optional(),   // e.g. 'HTTPS', 'SAML2/OIDC', 'reads'
+  kind: z.enum(['request', 'data', 'auth', 'event', 'deploy', 'external']).default('request'),
+  optional: z.boolean().default(false), // drawn dashed
+  description: z.string().default(''),
+});
+
+export const DiagramSchema = z.object({
+  groups: z.array(DiagramGroupSchema).default([]),
+  nodes: z.array(DiagramNodeSchema).default([]),
+  edges: z.array(DiagramEdgeSchema).default([]),
+});
+
 export const ArchitectureContractSchema = z.object({
   meta: z.object({
     schema: z.literal('arch-contract/v1'),
@@ -49,4 +91,5 @@ export const ArchitectureContractSchema = z.object({
   business_rules: z.array(z.string()).default([]),
   collections: z.array(CollectionSchema).default([]),
   apis: z.array(ApiSchema).min(1),
+  diagram: DiagramSchema.optional(),
 });

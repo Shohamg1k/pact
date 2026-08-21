@@ -17,7 +17,31 @@ Return ONLY a single JSON object (no prose, no markdown fences) matching exactly
   "business_rules": [ "BR-01: ..." ],
   "collections": [ { "id": "C-01", "name": "...", "fields": ["field_name constraint", "..."] } ],
   "apis": [ { "id": "API-01", "feature_id": "F-01", "method": "POST", "path": "/x",
-              "request": {}, "response": {}, "errors": [409], "rules": ["..."] } ]
+              "request": {}, "response": {}, "errors": [409], "rules": ["..."] } ],
+  "diagram": {
+    "groups": [
+      { "id": "clients", "label": "Clients", "lane": "left" },
+      { "id": "platform", "label": "Application platform", "sublabel": "MERN", "lane": "main" },
+      { "id": "services", "label": "Services", "parent": "platform", "lane": "main" },
+      { "id": "external", "label": "External", "lane": "right" }
+    ],
+    "nodes": [
+      { "id": "web", "label": "Web client", "sublabel": "React SPA", "group": "clients",
+        "icon": "browser", "implements": [],
+        "description": "What the user actually interacts with. Calls the API over HTTPS and holds no business rules of its own." },
+      { "id": "bookings-svc", "label": "Booking service", "sublabel": "F-01 · 4 endpoints",
+        "group": "services", "icon": "service", "implements": ["F-01", "API-01"],
+        "description": "Owns slot reservation. Enforces BR-01 by rejecting a second booking for the same slot with 409." },
+      { "id": "db", "label": "Bookings store", "sublabel": "C-01", "group": "platform",
+        "icon": "database", "implements": ["C-01"],
+        "description": "Persists bookings. A unique index on slot_id is what makes BR-01 safe under concurrency." }
+    ],
+    "edges": [
+      { "from": "web", "to": "bookings-svc", "label": "HTTPS", "kind": "request",
+        "description": "JSON over HTTPS; the client sends a slot id and receives the created booking or a 409." },
+      { "from": "bookings-svc", "to": "db", "label": "reads/writes", "kind": "data" }
+    ]
+  }
 }
 ```
 
@@ -46,6 +70,37 @@ Return ONLY a single JSON object (no prose, no markdown fences) matching exactly
 7. **IDs are stable and referenced.** Use `F-xx`, `AS-xx`, `C-xx`, `API-xx`, `BR-xx`
    prefixes. Every cross-reference (`feature_id`, rule text mentioning a business rule)
    must point at an ID you actually declared elsewhere in the document.
+
+## The diagram — draw the system, don't restate the endpoint list
+
+`diagram` is a HIGH-LEVEL RUNTIME PICTURE: the moving parts of the running system and how
+they talk. It is rendered as an interactive architecture diagram, so treat it as the
+drawing you would put in front of an engineering team, not a second copy of `apis[]`.
+
+8. **Group into zones.** `groups` are the boxes: use `lane` to place them —
+   `"left"` for actors and client apps, `"main"` for the system you are designing,
+   `"right"` for external systems and third parties. Nest a group inside another with
+   `parent` (e.g. a "Services" group inside an "Application platform" group).
+9. **Nodes are runtime components**, not features: a web client, an API service, a
+   worker, a datastore, a cache, a queue, an identity provider, a payment gateway.
+   Group related endpoints into ONE service node rather than drawing one node per
+   endpoint — a 15-endpoint system should have a handful of components, not 15.
+10. **Every node needs a real `description`.** It is shown when the reader clicks the
+   component, and it should say what the component does, what it owns, and which
+   business rules it enforces — the things a new engineer would ask. Two or three
+   sentences. Do not restate the label.
+11. **`implements` ties the picture back to the spec** — list the feature/API/collection
+   ids that component realises, so the diagram and the contract can be checked against
+   each other.
+12. **Edges are typed**: `request` (API/HTTP call), `data` (persistence), `auth`
+   (identity), `event` (async/queue), `deploy`, `external`. Label them with the protocol
+   or intent (`"HTTPS"`, `"OIDC"`, `"reads/writes"`, `"publishes"`), and set
+   `optional: true` for anything conditional. An edge `description` explains what
+   actually flows.
+13. **`icon` is a category**, chosen from: `browser`, `mobile`, `user`, `service`, `api`,
+   `gateway`, `server`, `worker`, `scheduler`, `database`, `cache`, `storage`, `queue`,
+   `auth`, `lock`, `email`, `payment`, `analytics`, `ml`, `search`, `cdn`, `cloud`,
+   `external`, `network`, `file`, `admin`.
 
 If you are given VALIDATOR ERRORS below, fix ONLY those exact issues — do not restructure
 anything that wasn't flagged.
