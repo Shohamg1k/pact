@@ -1,73 +1,54 @@
-// Files are truth (PRD §7, principle P3). Every read/write of `.pact/` goes through here —
-// the daemon is the only writer (PRD §2 non-negotiable #3).
+// Files are truth (PRD §7, principle P3). Every read/write of `.pact/` goes through
+// here — the daemon is the only writer (PRD §2 non-negotiable #3). Generic file I/O
+// only; domain-specific paths (projects/chats/jobs) live in kernel/chats.js, which is
+// built on top of these primitives.
 import { mkdir, readFile, writeFile, readdir, appendFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
-const ROOT = path.resolve(process.cwd(), '.pact');
-
-export function runDir(runId) {
-  return path.join(ROOT, 'runs', runId);
-}
+export const PACT_ROOT = path.resolve(process.cwd(), '.pact');
 
 export function sha256(content) {
   return 'sha256:' + crypto.createHash('sha256').update(content).digest('hex');
 }
 
-export async function ensureRunDir(runId) {
-  const dir = runDir(runId);
-  await mkdir(dir, { recursive: true });
-  await mkdir(path.join(dir, 'packs'), { recursive: true });
-  await mkdir(path.join(dir, 'raw'), { recursive: true });
-  return dir;
-}
-
-/** Write a run artifact as JSON (pretty) or raw text. Returns its hash. */
-export async function writeArtifact(runId, name, content) {
-  const dir = await ensureRunDir(runId);
+/** Write a file as JSON (pretty) or raw text under absDir. Creates parent dirs, so a
+ * nested name like 'artifacts/architect.json' works without a separate mkdir. Returns
+ * its hash. */
+export async function writeFileAt(absDir, name, content) {
+  const filePath = path.join(absDir, name);
+  await mkdir(path.dirname(filePath), { recursive: true });
   const body = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
-  await writeFile(path.join(dir, name), body, 'utf8');
+  await writeFile(filePath, body, 'utf8');
   return sha256(body);
 }
 
-export async function readArtifact(runId, name) {
-  const file = path.join(runDir(runId), name);
-  if (!existsSync(file)) return null;
-  const body = await readFile(file, 'utf8');
-  return name.endsWith('.json') || name.endsWith('.jsonl') ? body : body;
+export async function readFileAt(absDir, name) {
+  const filePath = path.join(absDir, name);
+  if (!existsSync(filePath)) return null;
+  return readFile(filePath, 'utf8');
 }
 
-export async function readJSON(runId, name) {
-  const body = await readArtifact(runId, name);
+export async function readJSONAt(absDir, name) {
+  const body = await readFileAt(absDir, name);
   return body ? JSON.parse(body) : null;
 }
 
 /** Append-only logs: worklog.jsonl, inbox.jsonl. One JSON object per line. */
-export async function appendLog(runId, name, entry) {
-  const dir = await ensureRunDir(runId);
-  await appendFile(path.join(dir, name), JSON.stringify(entry) + '\n', 'utf8');
+export async function appendLogAt(absDir, name, entry) {
+  const filePath = path.join(absDir, name);
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await appendFile(filePath, JSON.stringify(entry) + '\n', 'utf8');
 }
 
-export async function readLog(runId, name) {
-  const body = await readArtifact(runId, name);
+export async function readLogAt(absDir, name) {
+  const body = await readFileAt(absDir, name);
   if (!body) return [];
   return body.split('\n').filter(Boolean).map((l) => JSON.parse(l));
 }
 
-export async function listRuns() {
-  const dir = path.join(ROOT, 'runs');
-  if (!existsSync(dir)) return [];
-  return readdir(dir);
-}
-
-export async function getRun(runId) {
-  return readJSON(runId, 'run.json');
-}
-
-export async function patchRun(runId, patch) {
-  const current = (await getRun(runId)) ?? {};
-  const next = { ...current, ...patch };
-  await writeArtifact(runId, 'run.json', next);
-  return next;
+export async function listDirNames(absDir) {
+  if (!existsSync(absDir)) return [];
+  return readdir(absDir);
 }

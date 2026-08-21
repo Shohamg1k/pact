@@ -1,107 +1,116 @@
-// The run state machine (PRD §10). Emits SSE events shaped `{phase, status, detail}` —
-// this shape is the integration contract every other track (UI, runner) builds against.
-// It must not change without updating web/src/api.js and server/runner.js in lockstep.
+// The multi-agent run state machine — generalized from a fixed 2-phase pipeline to an
+// N-role batch, validated against the DAG in agents/registry.js before any model is
+// called. Emits SSE `{role, status, detail, ts}` per role — the integration contract
+// the UI builds against. A chat is resumable: `generateRoles` can be called again later
+// with a different selection, and registry.js's DAG check treats artifacts already on
+// disk from earlier batches the same as ones just produced in this batch.
 import { EventEmitter } from 'node:events';
-import { randomUUID } from 'node:crypto';
-import { ensureRunDir, writeArtifact, appendLog, patchRun } from './kernel/store.js';
+import { getChat, patchChat, appendChatLog, availableRoles, getArtifact, listArtifacts, writeChatFile } from './kernel/chats.js';
+import { validateSelection, ROLE_LABELS } from './agents/registry.js';
 import { runArchitect } from './agents/architect.js';
 import { runBackend } from './agents/backend.js';
+import { runPM } from './agents/pm.js';
+import { runUiux } from './agents/uiux.js';
+import { runFrontend } from './agents/frontend.js';
+import { runQA } from './agents/qa.js';
+import { runDocs } from './agents/docs.js';
+import { answerClarification } from './kernel/interrupts.js';
 import { buildTrace } from './trace.js';
 import { buildProvenance } from './kernel/provenance.js';
-import { answerClarification } from './kernel/interrupts.js';
-import { getRun } from './kernel/store.js';
 
 export const bus = new EventEmitter();
-bus.setMaxListeners(100);
+bus.setMaxListeners(200);
 
-function emit(runId, phase, status, detail = {}) {
-  bus.emit(runId, { phase, status, detail, ts: Date.now() });
+function emit(chatId, role, status, detail = {}) {
+  bus.emit(chatId, { role, status, detail, ts: Date.now() });
 }
 
-const PHASES = ['agent1', 'gateV1', 'agent2', 'gateV2', 'run', 'connectors'];
+const RUNNERS = { pm: runPM, architect: runArchitect, uiux: runUiux, backend: runBackend, frontend: runFrontend, qa: runQA, docs: runDocs };
+
+export class SelectionError extends Error {
+  constructor(errors) {
+    super('AGENT_SELECTION_INVALID');
+    this.code = 'AGENT_SELECTION_INVALID';
+    this.details = errors;
+  }
+}
 
 /**
- * Agent 1 + Gate V1 are real (agents/architect.js). Agent 2 + Gate V2 + run + connectors
- * remain a stub until feat/core-pipeline finishes them — the phase names, SSE shape, and
- * run.json fields are the contract other tracks build against; only phase internals change.
+ * Validates `roles` against the chat's already-available artifacts + this batch's own
+ * selection (registry.js), then starts the batch in the background. Throws
+ * SelectionError synchronously (before any model call) if the selection is
+ * unsatisfiable — e.g. QA with no Backend anywhere in this chat's history.
  */
-export async function startRun(brief, projectName = null, opts = {}) {
-  const runId = randomUUID().slice(0, 8);
-  await ensureRunDir(runId);
-  await writeArtifact(runId, 'requirement.md', brief);
-  await patchRun(runId, {
-    id: runId,
-    projectName,
-    status: 'created',
-    brief,
-    createdAt: new Date().toISOString(),
-    phases: PHASES.map((name) => ({ name, status: 'pending' })),
-  });
+export async function generateRoles(chatId, roles, opts = {}) {
+  const existing = await availableRoles(chatId);
+  const { valid, order, errors } = validateSelection(roles, existing);
+  if (!valid) throw new SelectionError(errors);
 
-  runPipeline(runId, brief, opts).catch((e) => {
-    appendLog(runId, 'worklog.jsonl', { ts: Date.now(), phase: 'orchestrator', event: 'error', detail: e.message });
-    patchRun(runId, { status: 'failed' });
-    emit(runId, 'run', 'failed', { error: e.message });
+  runBatch(chatId, order, opts).catch((e) => {
+    appendChatLog(chatId, 'worklog.jsonl', { ts: Date.now(), phase: 'orchestrator', event: 'error', detail: e.message });
   });
-
-  return runId;
+  return { order };
 }
 
-async function setPhase(runId, phase, status, detail) {
-  const run = await patchRun(runId, {});
-  const phases = run.phases.map((p) => (p.name === phase ? { ...p, status, ...detail } : p));
-  await patchRun(runId, { phases, status: phase });
-  emit(runId, phase, status, detail);
-  await appendLog(runId, 'worklog.jsonl', { ts: Date.now(), phase, event: status, detail });
-}
+async function runBatch(chatId, order, opts) {
+  const chat = await getChat(chatId);
+  const runOpts = {
+    mode: opts.mode ?? chat.mode ?? 'batch',
+    projectName: chat.projectId ?? null, // memory.js keys by project name; a chat's projectId doubles as that key
+    pinnedAdapter: opts.pinnedAdapter ?? chat.pinnedAdapter ?? undefined,
+  };
 
-const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  for (const role of order) {
+    const runner = RUNNERS[role];
+    emit(chatId, role, 'running', {});
 
-async function runPipeline(runId, brief, opts) {
-  await setPhase(runId, 'agent1', 'running', {});
-  const result = await runArchitect(runId, brief, { mode: opts.mode ?? 'batch' });
+    let result;
+    if (role === 'pm') result = await runner(chatId, chat.brief, runOpts);
+    else if (role === 'architect') result = await runner(chatId, chat.brief, runOpts);
+    else if (role === 'backend') result = await runner(chatId, await getArtifact(chatId, 'architect'), runOpts);
+    else result = await runner(chatId, runOpts); // uiux/frontend/qa/docs read their own upstream artifacts
 
-  if (result.status === 'awaiting_human') {
-    await setPhase(runId, 'agent1', 'awaiting_human', { itemId: result.item.id, question: result.item.payload.question });
-    return; // resumes via POST /api/runs/:id/answer -> resumeAfterAnswer()
+    if (result.status === 'awaiting_human') {
+      emit(chatId, role, 'awaiting_human', { itemId: result.item.id, question: result.item.payload.question });
+      // Only the paused role + whatever hadn't run yet — NOT the whole original order,
+      // so resuming doesn't re-run roles that already committed an artifact.
+      const remaining = order.slice(order.indexOf(role));
+      await patchChat(chatId, { pendingRole: role, pendingOrder: remaining });
+      return; // resumes via resumeAfterAnswer()
+    }
+
+    emit(chatId, role, 'passed', { gaps: result.gaps, savedTokens: result.savedTokens });
   }
 
-  await setPhase(runId, 'agent1', 'passed', { gaps: result.gaps });
-  await setPhase(runId, 'gateV1', 'passed', { contractHash: result.hash });
-
-  // Agent 2 (Backend Engineer) + Gate V2 tiers 1-2 are real, mirroring the agent1/gateV1
-  // pattern above: the gate is embedded inside runBackend's repair loop (PRD §8.2/§16),
-  // so by the time it returns the manifest has already passed or been gracefully pruned.
-  await setPhase(runId, 'agent2', 'running', {});
-  const backendResult = await runBackend(runId, result.contract);
-  await setPhase(runId, 'agent2', 'passed', { gaps: backendResult.gaps });
-  await setPhase(runId, 'gateV2', 'passed', { backendHash: backendResult.hash });
-
-  const trace = buildTrace(result.contract, backendResult.manifest, backendResult.gaps);
-  await writeArtifact(runId, 'trace.json', trace);
-  await writeArtifact(runId, 'provenance.json', buildProvenance(backendResult.manifest));
-
-  // --- run/connectors remain a stub: runner.js + connectors/* land on feat/runner-connectors ---
-  await setPhase(runId, 'run', 'running', {});
-  await wait(300);
-  await setPhase(runId, 'run', 'passed', { preview: `http://127.0.0.1:0/` });
-
-  await setPhase(runId, 'connectors', 'passed', {});
-  await patchRun(runId, { status: 'done_stub' });
+  await refreshTrace(chatId);
+  await patchChat(chatId, { pendingRole: null, pendingOrder: null });
 }
 
-/** POST /api/runs/:id/answer -> here. Records the answer, then re-enters the pipeline. */
-export async function resumeAfterAnswer(runId, itemId, answer, opts = {}) {
-  await answerClarification(runId, itemId, answer);
-  const run = await getRun(runId);
-  runPipeline(runId, run.brief, opts).catch((e) => {
-    appendLog(runId, 'worklog.jsonl', { ts: Date.now(), phase: 'orchestrator', event: 'error', detail: e.message });
-    patchRun(runId, { status: 'failed' });
-    emit(runId, 'run', 'failed', { error: e.message });
+async function refreshTrace(chatId) {
+  const artifacts = await listArtifacts(chatId);
+  const contract = artifacts.architect;
+  if (!contract) return; // no contract yet (e.g. only pm has run) — nothing to trace against
+  const gaps = Object.values(artifacts).flatMap((a) => a.gaps ?? []);
+  const trace = buildTrace(contract, artifacts, gaps);
+  await writeChatFile(chatId, 'trace.json', trace);
+  await writeChatFile(chatId, 'provenance.json', buildProvenance(artifacts));
+}
+
+/** POST /api/chats/:id/answer -> here. Records the answer, then resumes the batch that
+ * was paused on this role, continuing with the remaining roles in its original order. */
+export async function resumeAfterAnswer(chatId, itemId, answer, overrideOpts = {}) {
+  await answerClarification(chatId, itemId, answer);
+  const chat = await getChat(chatId);
+  const order = chat.pendingOrder ?? [chat.pendingRole].filter(Boolean);
+  const opts = { mode: chat.mode ?? 'batch', pinnedAdapter: chat.pinnedAdapter ?? undefined, ...overrideOpts };
+  runBatch(chatId, order, opts).catch((e) => {
+    appendChatLog(chatId, 'worklog.jsonl', { ts: Date.now(), phase: 'orchestrator', event: 'error', detail: e.message });
   });
 }
 
-export function subscribe(runId, listener) {
-  bus.on(runId, listener);
-  return () => bus.off(runId, listener);
+export function subscribe(chatId, listener) {
+  bus.on(chatId, listener);
+  return () => bus.off(chatId, listener);
 }
+
+export { ROLE_LABELS };

@@ -1,152 +1,78 @@
-// Agent 2 — Backend Engineer (PRD §13 CORE-4, §16 VER-2). Reads architecture.json VERBATIM
-// and only architecture.json — never the brief (CORE-4). This is the second and last place
-// a model is called; everything downstream (trace, provenance, runner, connectors) is
-// deterministic code.
+// Agent role: Backend Engineer (PRD §13 CORE-4, §16 VER-2). Reads the architect's
+// artifact VERBATIM and only that — never the brief, never any other role's output
+// (CORE-4, registry.js: backend's `reads` is exactly ['architect']). Thin config
+// module on top of agents/engine.js's shared repair loop.
 import { readFile } from 'node:fs/promises';
-import path from 'node:path';
 import crypto from 'node:crypto';
-import { ladder, completeWithLadder } from '../router.js';
-import { buildPack } from '../pack.js';
-import { extractJson } from './extractJson.js';
+import { runRepairLoop, commitArtifact, failJob, withForcedMeta } from './engine.js';
 import { BackendManifestSchema } from '../schemas/backend.js';
 import { runGateV2, repairFeedbackV2, pruneInvalidModules } from '../gates/v2.js';
-import { runDir, writeArtifact, appendLog, readArtifact } from '../kernel/store.js';
+import { readChatFile } from '../kernel/chats.js';
 
 const ROLE_PROMPT = await readFile(new URL('../prompts/backend.md', import.meta.url), 'utf8');
-const MAX_REPAIRS = 2; // PRD §8.2/§16: capped at 2 retries, then escalate the ladder rung
 
 /**
- * @param {string} runId
- * @param {object} contract - the VALIDATED architecture contract (kernel `read` never
- *   returns unvalidated artifacts — PRD §8.3)
+ * @param {string} chatId
+ * @param {object} contract - the architect's VALIDATED artifact (kernel `read` never
+ *   returns an unvalidated one — PRD §8.3)
+ * @param {{pinnedAdapter?: string}} opts
  */
-export async function runBackend(runId, contract) {
-  const cwd = path.join(runDir(runId), 'sandbox-agent2'); // SEC-2: never the user's real repo
-
-  // Read the EXACT bytes written to disk at Gate V1 commit time, never a re-serialization
-  // of the JS object — that is what makes byte-identity (CORE-4's acceptance test) provable.
-  const architectureRaw = await readArtifact(runId, 'architecture.json');
+export async function runBackend(chatId, contract, opts = {}) {
+  // Read the EXACT bytes committed to disk, never a re-serialization of the JS object —
+  // that is what makes byte-identity (CORE-4's acceptance test) provable.
+  const architectureRaw = await readChatFile(chatId, 'artifacts/architect.json');
   const contractHash = 'sha256:' + crypto.createHash('sha256').update(architectureRaw).digest('hex');
 
-  let repairNote = '';
-  let firstAdapterId = null;
-  let lastManifest = null;
-  let lastErrors = null;
-  let lastRaw = null;
+  const buildSections = (repairNote) => [
+    { name: 'role', content: ROLE_PROMPT },
+    // The ONLY data content in this pack is the architect's artifact, verbatim — never
+    // the brief (CORE-4). Provable by hash equality + grep (T3).
+    { name: 'contract', content: architectureRaw },
+    repairNote ? { name: 'repair', content: repairNote, budget: 2000, policy: 'head' } : null,
+  ].filter(Boolean);
 
-  const totalAttempts = MAX_REPAIRS + 2;
+  const gate = async (manifest) => runGateV2(contract, manifest);
 
-  for (let attempt = 0; attempt < totalAttempts; attempt++) {
-    const isEscalation = attempt === totalAttempts - 1;
-    let rungs = ladder();
-    if (isEscalation && firstAdapterId) {
-      rungs = rungs.filter((a) => a.id !== firstAdapterId);
-      if (rungs.length === 0) rungs = ladder();
-    }
+  const loopResult = await runRepairLoop({
+    chatId,
+    role: 'backend',
+    buildSections,
+    schema: withForcedMeta(BackendManifestSchema, { schema: 'backend/v1', runId: chatId, contractHash }),
+    gate,
+    gateRepairFeedback: repairFeedbackV2,
+    pinnedAdapter: opts.pinnedAdapter,
+  });
 
-    const { text: prompt, report } = buildPack(
-      [
-        { name: 'role', content: ROLE_PROMPT },
-        // The ONLY data content in this pack is architecture.json, verbatim — never the
-        // brief (CORE-4). Provable by hash equality + grep (T3).
-        { name: 'contract', content: architectureRaw },
-        repairNote ? { name: 'repair', content: repairNote, budget: 2000, policy: 'head' } : null,
-      ].filter(Boolean),
-    );
-
-    await writeArtifact(runId, 'packs/agent2.txt', prompt);
-
-    const { text: raw, adapterId } = await completeWithLadder(prompt, rungs, { runId, phase: 'agent2', cwd });
-    await writeArtifact(runId, `raw/agent2-attempt-${attempt}.txt`, raw);
-    lastRaw = raw;
-    if (attempt === 0) firstAdapterId = adapterId;
-
-    const parsed = extractJson(raw);
-    if (!parsed) {
-      lastErrors = [{ code: 'SCHEMA_INVALID', detail: 'no parseable JSON found in model output', recoverable: true }];
-      if (attempt < totalAttempts - 1) {
-        repairNote = repairFeedbackSchema(lastErrors);
-        await appendLog(runId, 'worklog.jsonl', { ts: Date.now(), phase: 'agent2', event: 'repair', detail: { attempt, errors: lastErrors } });
-        continue;
-      }
-      break;
-    }
-
-    // meta is deterministic, never trusted from the model — this is what makes the CORE-4
-    // acceptance test (contractHash == sha256(architecture.json)) true unconditionally.
-    parsed.meta = { ...parsed.meta, schema: 'backend/v1', runId, contractHash };
-
-    const zr = BackendManifestSchema.safeParse(parsed);
-    if (!zr.success) {
-      lastErrors = zr.error.issues.map((iss) => ({
-        code: 'SCHEMA_INVALID',
-        subject_id: iss.path.join('.'),
-        detail: iss.message,
-        recoverable: true,
-      }));
-      if (attempt < totalAttempts - 1) {
-        repairNote = repairFeedbackSchema(lastErrors);
-        await appendLog(runId, 'worklog.jsonl', { ts: Date.now(), phase: 'agent2', event: 'repair', detail: { attempt, errors: lastErrors } });
-        continue;
-      }
-      break;
-    }
-
-    const manifest = zr.data;
-    lastManifest = manifest;
-
-    const gateResult = await runGateV2(contract, manifest);
-    lastErrors = gateResult.errors;
-    if (gateResult.valid) {
-      return commitBackend(runId, manifest, [], report);
-    }
-
-    if (attempt < totalAttempts - 1) {
-      repairNote = repairFeedbackV2(gateResult.errors);
-      await appendLog(runId, 'worklog.jsonl', { ts: Date.now(), phase: 'agent2', event: 'repair', detail: { attempt, errors: gateResult.errors } });
-      continue;
-    }
+  if (loopResult.done) {
+    return finish(chatId, loopResult, loopResult.output, []);
   }
 
-  // Exhausted every attempt. P4: drop exactly the modules named by DRIFT_REJECTED /
-  // TIER1_PARSE_FAIL and proceed with the valid subset; anything else unresolved (coverage,
-  // conformance) is recorded as a gap rather than blocking the run (CORE-7).
-  if (lastManifest) {
-    const pruned = pruneInvalidModules(lastManifest, lastErrors ?? []);
-    const candidate = pruned ? pruned.backend : lastManifest;
+  // Exhausted. P4: drop exactly the modules named by DRIFT_REJECTED / TIER1_PARSE_FAIL
+  // and proceed with the valid subset (CORE-7); anything else unresolved (coverage,
+  // conformance) is recorded as a gap rather than blocking the chat.
+  if (loopResult.output) {
+    const pruned = pruneInvalidModules(loopResult.output, loopResult.errors);
+    const candidate = pruned ? pruned.backend : loopResult.output;
     if (candidate.modules.length > 0) {
       const gateResult = await runGateV2(contract, candidate);
       const remainingGaps = gateResult.errors.map((e) => `${e.code}: ${e.detail} (BLOCKED_ON_UPSTREAM)`);
-      const allGaps = [...(pruned?.gaps ?? []), ...remainingGaps];
-      return commitBackend(runId, candidate, allGaps, { savedTokens: 0 });
+      return finish(chatId, loopResult, candidate, [...(pruned?.gaps ?? []), ...remainingGaps]);
     }
   }
 
-  await appendLog(runId, 'worklog.jsonl', {
-    ts: Date.now(),
-    phase: 'agent2',
-    event: 'exhausted',
-    detail: { errors: lastErrors ?? [] },
-  });
-  throw new Error(`Agent 2 exhausted all repair attempts: ${(lastErrors ?? []).map((e) => e.code).join(', ')}`);
+  await failJob({ chatId, role: 'backend', jobId: loopResult.jobId, startedAt: loopResult.startedAt, errors: loopResult.errors });
 }
 
-function repairFeedbackSchema(errors) {
-  const lines = errors.map((e) => `- [${e.code}] ${e.subject_id ?? ''}: ${e.detail}`);
-  return (
-    'The previous output failed schema validation with these EXACT errors. Return the ' +
-    'complete corrected backend/v1 JSON object; fix only these issues:\n' +
-    lines.join('\n')
-  );
-}
-
-async function commitBackend(runId, manifest, gaps, packReport) {
-  const hash = await writeArtifact(runId, 'backend.json', manifest);
-  await appendLog(runId, 'worklog.jsonl', {
-    ts: Date.now(),
-    phase: 'agent2',
-    event: 'committed',
-    detail: { hash, gaps, savedTokens: packReport?.savedTokens ?? 0 },
+async function finish(chatId, loopResult, manifest, gaps) {
+  const result = await commitArtifact({
+    chatId,
+    role: 'backend',
+    jobId: loopResult.jobId,
+    startedAt: loopResult.startedAt,
+    adapterId: loopResult.adapterId,
+    output: manifest,
+    gaps,
+    packReport: loopResult.packReport,
   });
-  return { status: 'passed', manifest, hash, gaps };
+  return { status: 'passed', role: 'backend', manifest, hash: result.hash, gaps, savedTokens: result.savedTokens };
 }
