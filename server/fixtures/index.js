@@ -9,6 +9,23 @@ import { createChat, getArtifact, listJobs } from '../kernel/chats.js';
 import { generateRoles, subscribe, resumeAfterAnswer, getPreview } from '../orchestrator.js';
 import { runContractTests } from '../gates/contracttests.js';
 import { checkDrift } from '../gates/v2.js';
+import { probeAll } from '../adapters/index.js';
+
+// Every adapter object starts `available: false` until probeAll() actually checks the
+// real binaries (adapters/index.js) -- server/index.js does this once at daemon startup,
+// but a fixture runs as its own fresh process that never goes through that path. Without
+// this, ladder() always returns an empty rung list and every scenario that calls a model
+// fails immediately with NO_CAPACITY -- confirmed live: happy-path's first run "hung" for
+// 25+ minutes (actually a SEPARATE orchestrator.js bug, now fixed, that swallowed the
+// failure silently instead of surfacing it), and even after that fix it still failed
+// instantly with NO_CAPACITY until this probe was added. Probing once per process (not per
+// scenario call) matches ROUTE-6's own "on boot" cadence.
+let probed = false;
+async function ensureProbed() {
+  if (probed) return;
+  await probeAll();
+  probed = true;
+}
 
 const TERMINAL = new Set(['passed', 'failed', 'awaiting_human']);
 
@@ -55,6 +72,7 @@ const HAPPY_PATH_BRIEF =
 
 export async function happyPath() {
   console.log('=== D4 scenario: happy path ===');
+  await ensureProbed();
   const chat = await createChat({ text: HAPPY_PATH_BRIEF, mode: 'batch' });
   console.log(`chat ${chat.id} created`);
 
@@ -92,6 +110,7 @@ const VAGUE_BRIEF = 'Build an employee system.';
 
 export async function vagueBrief() {
   console.log('=== D4 scenario: vague brief (clarify-or-assume) ===');
+  await ensureProbed();
   const chat = await createChat({ text: VAGUE_BRIEF, mode: 'interactive' });
   console.log(`chat ${chat.id} created (interactive mode)`);
 
@@ -162,6 +181,7 @@ async function killNewestCliProcess(bin, sinceMs) {
 
 export async function failover() {
   console.log('=== D4 scenario: loss-free failover ===');
+  await ensureProbed();
   const chat = await createChat({ text: FAILOVER_BRIEF, mode: 'batch' });
   console.log(`chat ${chat.id} created`);
 
