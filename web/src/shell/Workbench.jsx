@@ -1,11 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   listChats, listProjects, getChat, createChat, streamChat, getArtifact, getFile,
-  generateRoles, getAgentGraph, getAdapters, startPreview,
+  generateRoles, getAgentGraph, getAdapters, startPreview, createProject,
 } from '../api.js';
 import { parseWorklog } from '../lib/worklog.js';
 import Explorer from './Explorer.jsx';
 import AgentPanel from './AgentPanel.jsx';
+import SettingsView from './SettingsView.jsx';
+import SaveTargetModal from './SaveTargetModal.jsx';
+import { getLinkedHandle, linkFolder, hasPermission, mirrorRole } from '../lib/fsMirror.js';
 import AdapterSettings from '../components/AdapterSettings.jsx';
 import ClarificationPrompt from '../components/ClarificationPrompt.jsx';
 import Inbox from '../components/Inbox.jsx';
@@ -42,6 +45,8 @@ export default function Workbench() {
   const [showAdapters, setShowAdapters] = useState(false);
   const [adapterCount, setAdapterCount] = useState(0);
   const [jumpFile, setJumpFile] = useState(null);
+  const [pendingBrief, setPendingBrief] = useState(null); // brief awaiting a save target
+  const folderRef = useRef(null); // FileSystemDirectoryHandle for the active chat, if linked
   const unsubRef = useRef(null);
 
   const roleLabels = useMemo(() => Object.fromEntries(roles.map((r) => [r.id, r.label])), [roles]);
@@ -74,6 +79,20 @@ export default function Workbench() {
     return c;
   }, []);
 
+  // Write one freshly-committed role into the linked OS folder. Best-effort by design:
+  // the mirror is a convenience, and `.pact/` remains canonical, so a failed write must
+  // never fail the run — it just surfaces in the console.
+  const mirror = useCallback(async (chatId, role) => {
+    const handle = folderRef.current;
+    if (!handle || !role) return;
+    try {
+      const artifact = await getArtifact(chatId, role);
+      if (artifact) await mirrorRole(handle, role, artifact);
+    } catch (e) {
+      console.warn('[pact] folder mirror failed for', role, e);
+    }
+  }, []);
+
   useEffect(() => {
     if (!activeChatId) return;
     let cancelled = false;
@@ -82,6 +101,12 @@ export default function Workbench() {
     setRunning(null);
     setGenError(null);
     loadChat(activeChatId);
+
+    // A linked folder is a per-chat handle persisted in IndexedDB; re-verify the grant
+    // rather than assuming it survived (the browser can revoke between sessions).
+    getLinkedHandle(`chat:${activeChatId}`).then(async (h) => {
+      folderRef.current = h && (await hasPermission(h)) ? h : null;
+    });
 
     unsubRef.current?.();
     unsubRef.current = streamChat(activeChatId, (evt) => {
@@ -93,7 +118,7 @@ export default function Workbench() {
       }
       if (evt.status === 'passed') {
         setRunning(null);
-        loadChat(activeChatId);
+        loadChat(activeChatId).then(() => mirror(activeChatId, evt.role));
       }
       if (evt.status === 'awaiting_human') {
         setRunning(null);
@@ -136,8 +161,23 @@ export default function Workbench() {
     setActiveTabId(null);
   }
 
+  // The brief is written first, then we ask where it should live (project + optional real
+  // folder) — matching how the user described it: type, Enter, then choose.
   async function startChat(text) {
-    const created = await createChat(text);
+    setPendingBrief(text);
+  }
+
+  async function confirmSaveTarget({ projectId, newProjectName, handle }) {
+    const brief = pendingBrief;
+    setPendingBrief(null);
+    let pid = projectId;
+    if (newProjectName) {
+      const project = await createProject(newProjectName);
+      pid = project.id;
+    }
+    const created = await createChat(brief, { projectId: pid });
+    if (handle) await linkFolder(`chat:${created.id}`, handle);
+    folderRef.current = handle ?? null;
     await refreshLists();
     setTabs([]);
     setActiveTabId(null);
@@ -235,7 +275,11 @@ export default function Workbench() {
           </button>
         ))}
         <div className="activity-spacer" />
-        <button className="activity-item" title="Adapters" onClick={() => setShowAdapters(true)}>
+        <button
+          className={`activity-item ${view === 'settings' ? 'active' : ''}`}
+          title="Settings, folder and connectors"
+          onClick={() => setView((v) => (v === 'settings' ? null : 'settings'))}
+        >
           <IconSettings />
         </button>
       </div>
@@ -250,6 +294,10 @@ export default function Workbench() {
             roleLabels={roleLabels}
             onSelectChat={selectChat}
             onNewChat={() => { setActiveChatId(null); setChat(null); setTabs([]); setActiveTabId(null); }}
+            onNewProject={async () => {
+              const name = window.prompt('Project name');
+              if (name && name.trim()) { await createProject(name.trim()); await refreshLists(); }
+            }}
             onOpenTab={openTab}
             activeTabId={activeTabId}
           />
@@ -268,6 +316,9 @@ export default function Workbench() {
             onToggle={(id) => setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; })}
             onGenerate={handleGenerate}
           />
+        )}
+        {view === 'settings' && (
+          <SettingsView chatId={activeChatId} artifacts={chat?.artifacts} onOpenAdapters={() => setShowAdapters(true)} />
         )}
         {view === 'inbox' && (
           <>
@@ -326,6 +377,9 @@ export default function Workbench() {
       </div>
 
       {showAdapters && <AdapterSettings onClose={() => setShowAdapters(false)} />}
+      {pendingBrief && (
+        <SaveTargetModal projects={projects} onCancel={() => setPendingBrief(null)} onConfirm={confirmSaveTarget} />
+      )}
     </div>
   );
 }

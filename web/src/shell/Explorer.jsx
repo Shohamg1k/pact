@@ -47,6 +47,7 @@ export default function Explorer({
   roleLabels,
   onSelectChat,
   onNewChat,
+  onNewProject,
   onOpenTab,
   activeTabId,
 }) {
@@ -99,7 +100,18 @@ export default function Explorer({
           </Section>
         )}
 
-        <Section title="Chats">
+        <Section
+          title="Chats"
+          action={
+            <button
+              className="btn small ghost"
+              title="New project"
+              onClick={(e) => { e.stopPropagation(); onNewProject?.(); }}
+            >
+              <IconPlus size={11} />
+            </button>
+          }
+        >
           {projects.map((p) => (
             <div key={p.id}>
               <div className="section-head" style={{ paddingLeft: 20, textTransform: 'none', fontWeight: 400 }}>

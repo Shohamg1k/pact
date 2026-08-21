@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { getFile, approveInboxItem, ackInboxItem, answerClarification } from '../api.js';
+import { getFile, approveInbox, ackInbox, answerClarification } from '../api.js';
 import { parseWorklog as parseJsonl } from '../lib/worklog.js';
 
 // UI-8: the single decision queue — clarifications, connector-write approvals, reviews.
@@ -49,14 +49,14 @@ export default function Inbox({ chatId, onAnswered }) {
 
   async function approve(item) {
     setBusyId(item.id);
-    const res = await approveInboxItem(item.id);
+    const res = await approveInbox(item.id);
     setBusyId(null);
     setNotice((n) => ({ ...n, [item.id]: res.ok ? 'approved' : `${res.status}: not wired yet (P1 gap)` }));
   }
 
   async function ack(item) {
     setBusyId(item.id);
-    const res = await ackInboxItem(item.id);
+    const res = await ackInbox(item.id);
     setBusyId(null);
     setNotice((n) => ({ ...n, [item.id]: res.ok ? 'acknowledged' : `${res.status}: not wired yet (P2 gap)` }));
   }

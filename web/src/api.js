@@ -143,12 +143,24 @@ export async function getFrontendPreviewStatus(chatId) {
   return res.json();
 }
 
-// UI-8: Inbox routes (approve/ack) are P1/P2 and not wired server-side yet.
-export async function approveInboxItem(itemId) {
-  const res = await fetch(`${BASE}/inbox/${itemId}/approve`, { method: 'POST' });
-  return asJson(res);
+// UI-8: the single decision queue. Connector writes are refused by gate.js until the
+// matching item here is approved (SEC-1), so these are load-bearing, not cosmetic.
+export async function listInbox(chatId) {
+  const res = await fetch(`${BASE}/inbox${chatId ? `?chatId=${chatId}` : ''}`);
+  return res.json();
 }
-export async function ackInboxItem(itemId) {
+export async function approveInbox(itemId) {
+  return postJson(`/inbox/${itemId}/approve`, {});
+}
+export async function rejectInbox(itemId) {
+  return postJson(`/inbox/${itemId}/reject`, {});
+}
+export async function ackInbox(itemId) {
   const res = await fetch(`${BASE}/inbox/${itemId}/ack`, { method: 'PATCH' });
   return asJson(res);
+}
+
+// CONN-1..4: deterministic exporters, each behind the inbox gate.
+export async function runConnector(chatId, name, payload = {}) {
+  return postJson(`/chats/${chatId}/connectors/${name}`, payload);
 }
