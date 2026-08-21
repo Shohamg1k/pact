@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import DiagramIcon, { resolveIcon, ICON_COLOR } from './diagramIcons.jsx';
 import { layoutDiagram, deriveDiagram, EDGE_STYLE, TILE_W, TILE_H } from './diagramLayout.js';
 
@@ -15,6 +15,8 @@ const GROUP_TINT = ['rgba(255,255,255,0.028)', 'rgba(255,255,255,0.038)', 'rgba(
 export default function ArchitectureDiagram({ contract }) {
   const [selected, setSelected] = useState(null);
   const [zoom, setZoom] = useState(1);
+  const [fit, setFit] = useState(true); // a wide diagram in a narrow pane is unreadable
+  const canvasRef = useRef(null);
 
   // The Architect draws the system when it can; otherwise derive a real picture from the
   // features/APIs/collections rather than showing an empty tab.
@@ -52,6 +54,7 @@ export default function ArchitectureDiagram({ contract }) {
 
   return (
     <div className="diagram-wrap">
+      <FitWatcher canvasRef={canvasRef} width={laid.width} fit={fit} setZoom={setZoom} detailOpen={!!sel} />
       <div className="diagram-toolbar">
         <span className="badge mono">{laid.nodes.length} components</span>
         <span className="badge mono">{laid.edges.length} connections</span>
@@ -62,13 +65,16 @@ export default function ArchitectureDiagram({ contract }) {
         )}
         <span style={{ flex: 1 }} />
         {selected && <button className="btn small ghost" onClick={() => setSelected(null)}>Clear selection</button>}
-        <button className="btn small ghost" onClick={() => setZoom((z) => Math.max(0.5, +(z - 0.1).toFixed(2)))}>−</button>
+        <button className={`btn small ${fit ? '' : 'ghost'}`} onClick={() => setFit((f) => !f)} title="Scale the diagram to fit the pane">
+          Fit
+        </button>
+        <button className="btn small ghost" onClick={() => { setFit(false); setZoom((z) => Math.max(0.3, +(z - 0.1).toFixed(2))); }}>−</button>
         <span className="hint" style={{ minWidth: 38, textAlign: 'center' }}>{Math.round(zoom * 100)}%</span>
-        <button className="btn small ghost" onClick={() => setZoom((z) => Math.min(1.6, +(z + 0.1).toFixed(2)))}>+</button>
+        <button className="btn small ghost" onClick={() => { setFit(false); setZoom((z) => Math.min(2, +(z + 0.1).toFixed(2))); }}>+</button>
       </div>
 
       <div className="diagram-body">
-        <div className="diagram-canvas">
+        <div className="diagram-canvas" ref={canvasRef}>
           <svg
             width={laid.width * zoom}
             height={laid.height * zoom}
@@ -224,6 +230,25 @@ export default function ArchitectureDiagram({ contract }) {
       </div>
     </div>
   );
+}
+
+/** Keeps zoom matched to the pane width while Fit is on. The panes are user-resizable,
+ * so this has to react to the container, not just to mount. */
+function FitWatcher({ canvasRef, width, fit, setZoom, detailOpen }) {
+  useEffect(() => {
+    if (!fit) return;
+    const el = canvasRef.current;
+    if (!el) return;
+    const apply = () => {
+      const avail = el.clientWidth - 16;
+      if (avail > 40) setZoom(Math.max(0.3, Math.min(1, +(avail / width).toFixed(3))));
+    };
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [fit, width, canvasRef, setZoom, detailOpen]);
+  return null;
 }
 
 const trim = (s, n) => (String(s).length > n ? String(s).slice(0, n - 1) + '…' : String(s));

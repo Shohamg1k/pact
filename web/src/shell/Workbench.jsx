@@ -13,6 +13,7 @@ import SettingsView from './SettingsView.jsx';
 import SaveTargetModal from './SaveTargetModal.jsx';
 import FileRail from './FileRail.jsx';
 import Splitter from './Splitter.jsx';
+import { ROLE_VIEWS } from './roleViews.js';
 import { PromptDialog, ConfirmDialog } from './Dialog.jsx';
 import AdapterSettings from '../components/AdapterSettings.jsx';
 import Inbox from '../components/Inbox.jsx';
@@ -34,18 +35,6 @@ import { ROLE_ICON, IconDiagram, IconServer, IconBrowser, IconTerminal, IconTrac
 const TAB_ICON = {
   diagram: IconDiagram, 'backend-map': IconServer, preview: IconBrowser, api: IconTerminal,
   trace: IconTrace, code: IconFile, artifact: IconFile, provenance: IconCheck, pack: IconFile, file: IconFile,
-};
-
-// Which output views each role offers, most useful first — clicking a run in the tree
-// opens the first entry.
-const ROLE_VIEWS = {
-  architect: [{ kind: 'diagram', label: 'Architecture' }, { kind: 'artifact', label: 'Contract' }],
-  backend: [{ kind: 'backend-map', label: 'Service map' }, { kind: 'code', label: 'Source' }, { kind: 'api', label: 'API console' }],
-  frontend: [{ kind: 'preview', label: 'Live preview' }, { kind: 'code', label: 'Source' }],
-  pm: [{ kind: 'artifact', label: 'Features' }],
-  uiux: [{ kind: 'artifact', label: 'Screens' }],
-  qa: [{ kind: 'artifact', label: 'Tests' }],
-  docs: [{ kind: 'artifact', label: 'Docs' }],
 };
 
 export default function Workbench() {
@@ -97,7 +86,10 @@ export default function Workbench() {
 
   // Clamp so no drag — and no window resize — can starve the centre pane.
   const MIN_CENTRE = 300;
-  const clamp = (v, lo, hi) => Math.min(Math.max(hi, lo), Math.max(lo, v));
+  // NOTE: when the ceiling falls below the floor (a viewport too small for every
+  // minimum at once) the CEILING wins, because overflowing the window is worse than
+  // being under a preferred minimum.
+  const clamp = (v, lo, hi) => (hi < lo ? hi : Math.max(lo, Math.min(hi, v)));
   const maxOut = useCallback(
     () => Math.max(320, window.innerWidth - (showNav ? navW : 0) - (showRail ? railW : 0) - MIN_CENTRE),
     [navW, railW, showNav, showRail],
@@ -106,11 +98,21 @@ export default function Workbench() {
   const resizeOut = (dx) => setOutW((w) => clamp(w - dx, 300, maxOut()));
   const resizeRail = (dx) => setRailW((w) => clamp(w - dx, 170, 400));
 
-  // Shrinking the window must give space back to the centre rather than pushing it to 0.
+  // Track the viewport so the output pane can hold its PROPORTION across a resize:
+  // shrinking must give space back to the centre, and growing must give space back to
+  // the output pane rather than stranding it at a width computed for a smaller window.
+  const lastW = useRef(window.innerWidth);
   useEffect(() => {
-    const onResize = () => setOutW((w) => Math.min(w, maxOut()));
+    const onResize = () => {
+      const prev = lastW.current || window.innerWidth;
+      const ratio = window.innerWidth / prev;
+      lastW.current = window.innerWidth;
+      // Hold the pane's proportion across a resize, then let the render-time clamp above
+      // have the final word on what actually fits.
+      setOutW((w) => clamp(Math.round(w * ratio), 300, maxOut()));
+    };
     window.addEventListener('resize', onResize);
-    onResize();
+    setOutW((w) => Math.min(w, maxOut()));
     return () => window.removeEventListener('resize', onResize);
   }, [maxOut]);
 
@@ -232,9 +234,15 @@ export default function Workbench() {
     setActiveTabId(id);
   }, [activeChatId]);
 
-  /** Clicking an agent run in the tree opens that role's most useful view. */
+  /** Clicking an agent run in the tree opens that role's most useful (first) view. */
   const openRole = useCallback((role) => {
     const v = (ROLE_VIEWS[role] ?? [{ kind: 'artifact', label: 'Output' }])[0];
+    openTab({ kind: v.kind, role, title: `${roleLabels[role] ?? role} · ${v.label}` });
+  }, [openTab, roleLabels]);
+
+  /** Opens a SPECIFIC view for a role — how Backend's Source/API console and Frontend's
+   * Source are reached now that a single click only opens the default view. */
+  const openView = useCallback((role, v) => {
     openTab({ kind: v.kind, role, title: `${roleLabels[role] ?? role} · ${v.label}` });
   }, [openTab, roleLabels]);
 
@@ -302,6 +310,13 @@ export default function Workbench() {
     await refreshLists();
   }
 
+  const tabstripRef = useRef(null);
+  useEffect(() => {
+    // The tab strip scrolls once a few tabs are open; without this the tab you just
+    // opened can be off-screen, which reads as "the click did nothing".
+    tabstripRef.current?.querySelector('.tabx.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, [activeTabId, tabs.length]);
+
   const activeTab = tabs.find((t) => t.id === activeTabId);
 
   function renderTab(tab) {
@@ -329,10 +344,10 @@ export default function Workbench() {
       case 'artifact':
       default: {
         const art = a[tab.role];
-        if (tab.role === 'pm') return <div className="pad"><PMViewer artifact={art} /></div>;
-        if (tab.role === 'uiux') return <div className="pad"><UiuxViewer artifact={art} /></div>;
-        if (tab.role === 'qa') return <div className="pad"><QAViewer artifact={art} /></div>;
-        if (tab.role === 'docs') return <div className="pad"><DocsViewer artifact={art} /></div>;
+        if (tab.role === 'pm') return <PMViewer artifact={art} />;
+        if (tab.role === 'uiux') return <UiuxViewer artifact={art} contract={a.architect} />;
+        if (tab.role === 'qa') return <QAViewer artifact={art} contract={a.architect} />;
+        if (tab.role === 'docs') return <DocsViewer artifact={art} />;
         return <div className="pad"><pre className="code-block">{JSON.stringify(art, null, 2)}</pre></div>;
       }
     }
@@ -343,17 +358,25 @@ export default function Workbench() {
   // Nothing is open yet -> the output pane and file rail have nothing to say, so the
   // centre takes the whole width instead of framing the composer with empty panes.
   const focus = !activeChatId;
-  const cols = focus
-    ? [showNav ? `${navW}px` : '0px', showNav ? '5px' : '0px', '1fr', '0px', '0px', '0px', '0px'].join(' ')
-    : [
-        showNav ? `${navW}px` : '0px',
-        showNav ? '5px' : '0px',
-        '1fr',
-        '5px',
-        `${outW}px`,
-        showRail ? '5px' : '0px',
-        showRail ? `${railW}px` : '0px',
-      ].join(' ');
+  // Widths are clamped at RENDER, not only on the resize event: a missed or coalesced
+  // resize previously left nav+out+rail wider than the window and squeezed the centre
+  // pane to 1px. Deriving them here makes the invariant hold unconditionally.
+  const navPx = showNav ? Math.min(navW, Math.max(160, window.innerWidth - 360)) : 0;
+  const railPx = showRail && !focus ? railW : 0;
+  const splitters = (showNav ? 5 : 0) + (focus ? 0 : 5) + (railPx ? 5 : 0);
+  const outPx = focus
+    ? 0
+    : Math.max(240, Math.min(outW, window.innerWidth - navPx - railPx - splitters - MIN_CENTRE));
+
+  const cols = [
+    `${navPx}px`,
+    showNav ? '5px' : '0px',
+    'minmax(0, 1fr)',
+    focus ? '0px' : '5px',
+    `${outPx}px`,
+    railPx ? '5px' : '0px',
+    `${railPx}px`,
+  ].join(' ');
 
   return (
     <div className="shell" style={{ gridTemplateColumns: cols }}>
@@ -368,6 +391,7 @@ export default function Workbench() {
           onDeleteChat={(c) => setDialog({ kind: 'del-chat', target: c })}
           onDeleteProject={(p) => setDialog({ kind: 'del-project', target: p })}
           onOpenRole={openRole}
+          onOpenView={openView}
           panel={
             <SidePanel
               view={view} roles={roles} existing={existing} running={running} failed={failed}
@@ -418,7 +442,7 @@ export default function Workbench() {
 
       <div className="pane out" style={{ display: focus ? 'none' : 'flex' }}>
         {tabs.length > 0 && (
-          <div className="tabstrip">
+          <div className="tabstrip" ref={tabstripRef}>
             {tabs.map((t) => {
               const Icon = TAB_ICON[t.kind] ?? ROLE_ICON[t.role] ?? IconFile;
               return (
