@@ -10,6 +10,7 @@ import { buildPack } from '../pack.js';
 import { extractJson } from './extractJson.js';
 import { BackendManifestSchema } from '../schemas/backend.js';
 import { runGateV2, repairFeedbackV2, pruneInvalidModules } from '../gates/v2.js';
+import { runBootCheck } from '../runner.js';
 import { runDir, writeArtifact, appendLog, readArtifact } from '../kernel/store.js';
 
 const ROLE_PROMPT = await readFile(new URL('../prompts/backend.md', import.meta.url), 'utf8');
@@ -98,13 +99,24 @@ export async function runBackend(runId, contract, opts = {}) {
 
     const gateResult = await runGateV2(contract, manifest);
     lastErrors = gateResult.errors;
+
     if (gateResult.valid) {
-      return commitBackend(runId, manifest, [], report);
+      // VER-3 (PRD §16): tier 3 (boot) runs only after tiers 1 (syntax) and 2
+      // (coverage/drift/conformance) already passed — cheap before expensive (P6). A
+      // manifest that fails to boot re-enters this SAME bounded repair loop, exactly like
+      // a tier-1/2 failure, rather than a separate unbounded retry path.
+      const bootDir = path.join(runDir(runId), 'boot-check'); // caller owns the path (runner.js takes it as a param)
+      const bootResult = await runBootCheck(bootDir, contract, manifest);
+      if (bootResult.valid) {
+        return commitBackend(runId, manifest, [], report);
+      }
+      lastErrors = bootResult.errors;
+      await appendLog(runId, 'worklog.jsonl', { ts: Date.now(), phase: 'agent2', event: 'boot_fail', detail: { attempt, errors: bootResult.errors } });
     }
 
     if (attempt < totalAttempts - 1) {
-      repairNote = repairFeedbackV2(gateResult.errors);
-      await appendLog(runId, 'worklog.jsonl', { ts: Date.now(), phase: 'agent2', event: 'repair', detail: { attempt, errors: gateResult.errors } });
+      repairNote = repairFeedbackV2(lastErrors);
+      await appendLog(runId, 'worklog.jsonl', { ts: Date.now(), phase: 'agent2', event: 'repair', detail: { attempt, errors: lastErrors } });
       continue;
     }
   }
@@ -118,7 +130,14 @@ export async function runBackend(runId, contract, opts = {}) {
     if (candidate.modules.length > 0) {
       const gateResult = await runGateV2(contract, candidate);
       const remainingGaps = gateResult.errors.map((e) => `${e.code}: ${e.detail} (BLOCKED_ON_UPSTREAM)`);
-      const allGaps = [...(pruned?.gaps ?? []), ...remainingGaps];
+      // Structural tiers 1+2 don't re-check boot — a persistent BOOT_FAIL from lastErrors
+      // must be carried into the gap list explicitly, or a manifest that never once
+      // booted would commit looking indistinguishable from one that passed (CORE-7/P4:
+      // never a silent hole).
+      const bootGaps = (lastErrors ?? [])
+        .filter((e) => e.code === 'BOOT_FAIL')
+        .map((e) => `${e.code}: ${e.detail} (BLOCKED_ON_UPSTREAM — server never booted after ${MAX_REPAIRS} repair attempts)`);
+      const allGaps = [...(pruned?.gaps ?? []), ...remainingGaps, ...bootGaps];
       return commitBackend(runId, candidate, allGaps, { savedTokens: 0 });
     }
   }
