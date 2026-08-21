@@ -11,6 +11,16 @@ export default function ApiConsole({ chatId, contract, backendLive, onStartBacke
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
   const [elapsed, setElapsed] = useState(null);
+  // Most generated contracts require a bearer token (BR-05-style rules) — kept in
+  // localStorage per chat so it survives a re-render/tab-switch mid-demo, not typed fresh
+  // every time. Never sent anywhere but this chat's own sandboxed preview (see api.js).
+  const [token, setToken] = useState(() => localStorage.getItem(`pact:apiToken:${chatId}`) ?? '');
+
+  function updateToken(v) {
+    setToken(v);
+    if (v) localStorage.setItem(`pact:apiToken:${chatId}`, v);
+    else localStorage.removeItem(`pact:apiToken:${chatId}`);
+  }
 
   const apis = contract?.apis ?? [];
 
@@ -38,7 +48,8 @@ export default function ApiConsole({ chatId, contract, backendLive, onStartBacke
       return;
     }
     const t0 = performance.now();
-    const res = await requestPreview(chatId, { method, path, body: parsed });
+    const headers = token.trim() ? { Authorization: token.trim().startsWith('Bearer ') ? token.trim() : `Bearer ${token.trim()}` } : undefined;
+    const res = await requestPreview(chatId, { method, path, body: parsed, headers });
     setElapsed(Math.round(performance.now() - t0));
     setBusy(false);
     setResult(res.body ?? res);
@@ -80,6 +91,17 @@ export default function ApiConsole({ chatId, contract, backendLive, onStartBacke
           </div>
         </>
       )}
+
+      <div className="section-title">Authorization</div>
+      <div className="req-row">
+        <input
+          type="text"
+          value={token}
+          onChange={(e) => updateToken(e.target.value)}
+          placeholder="Bearer token (if the contract requires one) — e.g. a JWT with a sub claim"
+          style={{ flex: 1 }}
+        />
+      </div>
 
       <div className="section-title">Request</div>
       <div className="req-row">

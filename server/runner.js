@@ -571,10 +571,15 @@ export async function startPreviewServer(generatedDir, contract, manifest, opts 
     port,
     baseUrl,
     getStderr: handle.getStderr,
-    async proxy(method, urlPath, body) {
+    async proxy(method, urlPath, body, headers) {
+      // Most generated contracts declare bearer-token auth (BR-05-style rules), so a
+      // proxy that drops every incoming header can only ever reach the unauthenticated
+      // slice of the API. `headers` (e.g. { Authorization: 'Bearer ...' }) passes through
+      // untouched; Content-Type is still inferred automatically when there's a body.
+      const finalHeaders = { ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...(headers ?? {}) };
       const res = await fetch(`${baseUrl}${urlPath}`, {
         method,
-        headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+        headers: Object.keys(finalHeaders).length ? finalHeaders : undefined,
         body: body !== undefined ? JSON.stringify(body) : undefined,
         signal: AbortSignal.timeout(10_000),
       });

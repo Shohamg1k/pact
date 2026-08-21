@@ -19,21 +19,25 @@ import AdapterSettings from '../components/AdapterSettings.jsx';
 import Inbox from '../components/Inbox.jsx';
 import CodeViewer from '../components/CodeViewer.jsx';
 import TraceMatrix from '../components/TraceMatrix.jsx';
+import ContractTestsViewer from '../components/ContractTestsViewer.jsx';
 import PMViewer from '../components/PMViewer.jsx';
 import UiuxViewer from '../components/UiuxViewer.jsx';
 import QAViewer from '../components/QAViewer.jsx';
 import DocsViewer from '../components/DocsViewer.jsx';
 import ArchitectureDiagram from '../tabs/ArchitectureDiagram.jsx';
+import SchemaDiagram from '../tabs/SchemaDiagram.jsx';
 import BackendMap from '../tabs/BackendMap.jsx';
 import LivePreview from '../tabs/LivePreview.jsx';
 import ApiConsole from '../tabs/ApiConsole.jsx';
+import ApiTesterFrame from '../tabs/ApiTesterFrame.jsx';
 import ProvenanceTab from '../tabs/ProvenanceTab.jsx';
 import PackViewer from '../tabs/PackViewer.jsx';
 import FileTab from '../tabs/FileTab.jsx';
 import { ROLE_ICON, IconDiagram, IconServer, IconBrowser, IconTerminal, IconTrace, IconFile, IconCheck, IconPanelLeft, IconPanelRight } from './icons.jsx';
 
 const TAB_ICON = {
-  diagram: IconDiagram, 'backend-map': IconServer, preview: IconBrowser, api: IconTerminal,
+  diagram: IconDiagram, schema: IconDiagram, 'backend-map': IconServer, preview: IconBrowser, api: IconTerminal,
+  tester: IconBrowser, contracttests: IconCheck,
   trace: IconTrace, code: IconFile, artifact: IconFile, provenance: IconCheck, pack: IconFile, file: IconFile,
 };
 
@@ -323,6 +327,7 @@ export default function Workbench() {
     const a = artifacts;
     switch (tab.kind) {
       case 'diagram': return <ArchitectureDiagram contract={a.architect} />;
+      case 'schema': return <SchemaDiagram contract={a.architect} />;
       case 'backend-map':
         return <BackendMap manifest={a.backend} contract={a.architect}
           onOpenFile={(p) => { setJumpFile({ role: 'backend', path: p }); openTab({ kind: 'code', role: 'backend', title: 'Backend · Source' }); }} />;
@@ -330,6 +335,10 @@ export default function Workbench() {
         return <LivePreview chatId={tab.chatId} backendLive={backendLive} onStartBackend={existing.has('backend') ? startBackend : null} starting={startingBackend} />;
       case 'api':
         return <ApiConsole chatId={tab.chatId} contract={a.architect} backendLive={backendLive} onStartBackend={existing.has('backend') ? startBackend : null} starting={startingBackend} />;
+      case 'tester':
+        return <ApiTesterFrame chatId={tab.chatId} backendLive={backendLive} onStartBackend={existing.has('backend') ? startBackend : null} starting={startingBackend} />;
+      case 'contracttests':
+        return <div className="pad"><ContractTestsViewer chatId={tab.chatId} refreshKey={a.backend ? Object.keys(a).join() : null} /></div>;
       case 'provenance':
         return <ProvenanceTab chatId={tab.chatId} chat={chat} roles={roles}
           onOpenPack={(role, jobId) => openTab({ kind: 'pack', role, jobId, title: `${roleLabels[role] ?? role} · Pack` })} />;
@@ -423,6 +432,15 @@ export default function Workbench() {
             </button>
           )}
           <span style={{ flex: 1 }} />
+          {activeChatId && existing.has('backend') && (
+            <button
+              className="btn small"
+              title="Every declared endpoint, tried live — generated from the contract, no extra agent run"
+              onClick={() => openTab({ kind: 'tester', title: 'Test with frontend' })}
+            >
+              Test with frontend
+            </button>
+          )}
           {chat && <span className="hint">{chat.chat?.title?.slice(0, 46)}</span>}
         </div>
         {!activeChatId ? (

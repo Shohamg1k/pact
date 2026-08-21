@@ -41,6 +41,7 @@ console.log('miro.selftest.mjs — buildMiroBoardPlan checks passed');
   assert.strictEqual(result.connector, 'miro');
   assert.strictEqual(result.shapeCount, 3);
   assert.strictEqual(result.arrowCount, 1);
+  assert.strictEqual(result.url, 'https://miro.com/app/board/board-1/', 'a clickable board URL must always be returned, even when the create-board response has no viewLink');
   assert.ok(calls.some((c) => c.url.endsWith('/boards') && c.method === 'POST'), 'should create a board when no boardId given');
   assert.strictEqual(calls.filter((c) => c.url.includes('/shapes')).length, 3, 'should POST one shape per collection/feature');
   assert.strictEqual(calls.filter((c) => c.url.includes('/connectors')).length, 1, 'should POST one connector per arrow');

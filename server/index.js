@@ -18,6 +18,9 @@ import {
   chatDir,
   deleteChat,
   deleteProject,
+  getArtifact,
+  writeChatFile,
+  appendChatLog,
 } from './kernel/chats.js';
 import { gate } from './gate.js';
 import { adapters, probeAll } from './adapters/index.js';
@@ -30,6 +33,7 @@ import { exportGithubPR } from './connectors/github.js';
 import { exportMiro } from './connectors/miro.js';
 import { exportSlack } from './connectors/slack.js';
 import { buildFrontendBundle, previewDocument } from './preview/frontend.js';
+import { buildTesterDocument } from './preview/tester.js';
 
 const app = express();
 app.use(cors());
@@ -158,6 +162,39 @@ app.get('/api/chats/:id/artifact/:role', async (req, res) => {
   if (body === null) return res.status(404).json({ code: 'NOT_FOUND' });
   res.type('application/json').send(body);
 });
+// Manual edit of one generated module's code, for the "I can see files, make changes"
+// demo moment — NOT a full re-verification: the edit bypasses the repair-loop gates
+// that ran when the agent originally committed, so it's an explicit escape hatch, not a
+// replacement for them. Only roles with a modules[] array (backend, frontend) make
+// sense here; other artifacts (the architect contract, PM's feature list, ...) are
+// structured documents other agents pin a hash against, so editing them out from under
+// a downstream agent would silently break a promise this system otherwise guarantees.
+const EDITABLE_ROLES = new Set(['backend', 'frontend']);
+app.put('/api/chats/:id/artifact/:role/module', async (req, res) => {
+  const { id: chatId, role } = req.params;
+  const { path: modulePath, code } = req.body ?? {};
+  if (!EDITABLE_ROLES.has(role)) return res.status(400).json({ code: 'NOT_EDITABLE', detail: `${role} has no editable modules` });
+  if (!modulePath || typeof code !== 'string') return res.status(400).json({ code: 'BAD_REQUEST', detail: 'body must be {path, code}' });
+
+  const artifact = await getArtifact(chatId, role);
+  if (!artifact) return res.status(404).json({ code: 'NOT_FOUND', detail: `no ${role} artifact for this chat` });
+  const mod = (artifact.modules ?? []).find((m) => m.path === modulePath);
+  if (!mod) return res.status(404).json({ code: 'NOT_FOUND', detail: `no module at ${modulePath}` });
+
+  mod.code = code;
+  await writeChatFile(chatId, `artifacts/${role}.json`, artifact);
+  await appendChatLog(chatId, 'worklog.jsonl', { ts: Date.now(), phase: role, event: 'manual_edit', detail: { path: modulePath } });
+
+  // If this is the backend and a live preview is running, restart it so the edit takes
+  // effect immediately — otherwise the edit is saved but only visible on the next boot.
+  let restarted = false;
+  if (role === 'backend' && getPreview(chatId)) {
+    await startPreviewForChat(chatId).catch(() => {});
+    restarted = true;
+  }
+  res.json({ ok: true, restarted });
+});
+
 // Chat-root derived files (openapi.yaml, decisions.md, technical-spec.md, etc.)
 app.get('/api/chats/:id/file/*name', async (req, res) => {
   const name = [].concat(req.params.name).join('/');
@@ -209,14 +246,14 @@ app.get('/api/chats/:id/agents', async (req, res) => {
 // the chat's OWN sandboxed generated app, not a third party, so no Inbox approval is
 // required, unlike a connector write.
 app.post('/api/chats/:id/preview/request', async (req, res) => {
-  const { method, path: urlPath, body } = req.body ?? {};
+  const { method, path: urlPath, body, headers } = req.body ?? {};
   if (!method || typeof urlPath !== 'string' || !urlPath.startsWith('/')) {
     return res.status(400).json({ code: 'INVALID_PREVIEW_REQUEST', detail: 'method and an absolute path are required' });
   }
   const preview = getPreview(req.params.id);
   if (!preview) return res.status(404).json({ code: 'NO_PREVIEW', detail: 'this chat has no live preview server (backend has not booted one yet, or it failed to boot)' });
   try {
-    const result = await preview.proxy(method, urlPath, body);
+    const result = await preview.proxy(method, urlPath, body, headers);
     res.json(result);
   } catch (e) {
     res.status(502).json({ code: 'PREVIEW_UNREACHABLE', detail: e.message });
@@ -251,6 +288,17 @@ app.get('/api/chats/:id/frontend-preview', async (req, res) => {
   // Same-origin so the shim can reach the proxy below; framed only by our own workbench.
   res.set('Content-Security-Policy', "frame-ancestors 'self'");
   res.type('html').send(previewDocument(req.params.id, built.js, built.error));
+});
+
+// "Test with frontend" (deterministic, no agent call): a tester page generated straight
+// from the architect's contract, one card per declared endpoint. Not a substitute for
+// the real Frontend agent's generated app — a zero-latency way to exercise every
+// endpoint the moment Backend commits, without waiting on two more agent runs.
+app.get('/api/chats/:id/api-tester', async (req, res) => {
+  const contractRaw = await readChatFile(req.params.id, 'artifacts/architect.json');
+  const contract = contractRaw ? JSON.parse(contractRaw) : null;
+  res.set('Content-Security-Policy', "frame-ancestors 'self'");
+  res.type('html').send(buildTesterDocument(contract, { chatId: req.params.id }));
 });
 
 app.all('/api/chats/:id/frontend-preview/proxy/*urlPath', async (req, res) => {

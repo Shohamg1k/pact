@@ -14,6 +14,26 @@ const CONNECTORS = [
   { id: 'slack', label: 'Slack summary', desc: 'Run summary, trace stats and preview URL to a webhook.', needs: null },
 ];
 
+/** A connector's real return value — {result: {...}} from the server route — carries a
+ * live URL (Miro's board, GitHub's PR) for some connectors and just a file path for
+ * others (Postman writes local files, Slack has no destination page). Showing "Done."
+ * when there's a real clickable destination throws away the one thing worth clicking. */
+function ConnectorSuccess({ body }) {
+  const r = body?.result ?? {};
+  const url = r.url ?? r.prUrl;
+  if (url) {
+    return (
+      <a href={url} target="_blank" rel="noreferrer" className="connector-link">
+        Open {r.connector === 'github' ? 'the pull request' : r.connector === 'miro' ? 'the Miro board' : 'result'} →
+      </a>
+    );
+  }
+  if (r.path) return <span>Written to {r.path}</span>;
+  if (r.files?.length) return <span>Wrote {r.files.length} file{r.files.length === 1 ? '' : 's'}</span>;
+  if (r.posted) return <span>Posted to Slack</span>;
+  return <span>{body?.detail ?? 'Done.'}</span>;
+}
+
 function Group({ title, children }) {
   return (
     <div style={{ padding: '10px 12px 14px', borderBottom: '1px solid var(--border-soft)' }}>
@@ -125,9 +145,7 @@ export default function SettingsView({ chatId, artifacts, onOpenAdapters }) {
                   <div className="hint">{blocked ? `Needs the ${c.needs} agent first.` : c.desc}</div>
                   {result?.id === c.id && (
                     <div className={`notice ${result.ok ? 'ok' : 'bad'}`} style={{ marginTop: 6, fontSize: 11.5 }}>
-                      {result.ok
-                        ? result.body?.detail || result.body?.path || 'Done.'
-                        : result.body?.detail || result.body?.code || 'Failed.'}
+                      {result.ok ? <ConnectorSuccess body={result.body} /> : result.body?.detail || result.body?.code || 'Failed.'}
                     </div>
                   )}
                 </div>

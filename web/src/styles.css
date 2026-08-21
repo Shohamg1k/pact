@@ -526,6 +526,12 @@ input[type=text]:focus, select:focus, textarea.field:focus, .body-input:focus { 
 .badge.bad { color: var(--red); background: rgba(217,105,95,0.13); }
 .badge.mono { font-family: var(--mono); }
 .badge.dot::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.badge.small { font-size: 10px; padding: 1px 6px; }
+
+.ct-group { border: 1px solid var(--border-soft); border-radius: 8px; overflow: hidden; }
+.ct-group-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--raised); }
+.ct-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px 6px 30px; font-size: 12px; border-top: 1px solid var(--border-soft); }
+.ct-row-fail { background: rgba(217,105,95,0.06); }
 
 .chip {
   display: inline-block;
@@ -571,6 +577,8 @@ input[type=text]:focus, select:focus, textarea.field:focus, .body-input:focus { 
 }
 .notice.bad { border-left-color: var(--red); }
 .notice.ok { border-left-color: var(--green); }
+.connector-link { color: var(--accent); font-weight: 600; text-decoration: none; }
+.connector-link:hover { text-decoration: underline; }
 .empty-state { color: var(--text-faint); font-size: 12.5px; padding: 18px 0; }
 .gap-banner, .gap-notice {
   padding: 10px 13px; border-radius: 8px; background: var(--raised);

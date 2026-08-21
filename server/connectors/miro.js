@@ -113,5 +113,9 @@ export async function exportMiro(contract, opts = {}) {
     });
   }
 
-  return { connector: 'miro', boardId: board.id, shapeCount: plan.shapes.length, arrowCount: plan.arrows.length };
+  // Miro's create-board response includes viewLink directly; when reusing an existing
+  // board (opts.boardId) we only have the id, so construct the standard board URL —
+  // same destination, just not echoed back by the API in that path.
+  const url = board.viewLink ?? `https://miro.com/app/board/${board.id}/`;
+  return { connector: 'miro', boardId: board.id, url, shapeCount: plan.shapes.length, arrowCount: plan.arrows.length };
 }

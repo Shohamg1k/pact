@@ -11,11 +11,19 @@
 // account (see github.selftest.mjs) — default is a real `git`/`gh` spawn.
 import { spawn } from 'node:child_process';
 import { writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 
 function defaultExec(cmd, args, cwd) {
   return new Promise((resolve, reject) => {
-    const p = spawn(cmd, args, { cwd, shell: true });
+    // shell:true was re-tokenizing args through cmd.exe on Windows — a commit message
+    // like "PACT: notes-api" split into `-m PACT:` plus a stray `notes-api` positional
+    // argument, which git then read as a pathspec ("pathspec 'notes-api' did not match
+    // any file(s)"), not part of the message. git.exe and gh.exe are real executables
+    // (confirmed via `where git`/`where gh` — not .cmd/.bat PATH shims like npm/py), so
+    // spawning them directly with an argv array needs no shell at all, and Node passes
+    // each array element through untouched — no quoting to get wrong.
+    const p = spawn(cmd, args, { cwd, shell: false });
     let stdout = '';
     let stderr = '';
     p.stdout.on('data', (d) => (stdout += d));
@@ -58,16 +66,28 @@ export async function exportGithubPR(generatedDir, contract, opts = {}) {
       `- ${(contract.collections ?? []).length} collections`,
     ].join('\n');
 
-  const isRepo = await run('git', ['rev-parse', '--is-inside-work-tree']).then(
-    () => true,
-    () => false,
-  );
+  // `git rev-parse --is-inside-work-tree` is the WRONG check here: it walks up parent
+  // directories looking for ANY ancestor `.git`, so it returns true for generatedDir
+  // whenever generatedDir happens to be nested inside PACT's OWN repo (exactly the case
+  // for `.pact/chats/<id>/preview` — .pact/ is gitignored, but that doesn't stop it from
+  // being "inside" the enclosing working tree for this check). Confirmed live: this made
+  // `git checkout -B`/`add -A`/`commit` run against the daemon's real repo — switching
+  // its branch and staging its actual source files — the exact thing this file's header
+  // comment says never happens ("nothing writes to the user's real repo"). The correct
+  // check is whether generatedDir has ITS OWN `.git`, not whether one exists anywhere above it.
+  const isRepo = existsSync(path.join(generatedDir, '.git'));
 
   if (!isRepo) {
     // `generatedDir` is very likely the SAME directory the live preview booted from
     // (runner.js's node_modules + .pact-deps-hash marker live there) — never commit those.
     await writeFile(path.join(generatedDir, '.gitignore'), 'node_modules/\n.pact-deps-hash\n', 'utf8');
     await run('git', ['init']);
+    // Local to this generated repo, not a dependency on the host machine's global git
+    // config — confirmed live that a fresh machine (no global user.name/user.email) makes
+    // the very next commit fail with "Author identity unknown". PACT generates and commits
+    // deterministically; it shouldn't need the host to have git configured beyond git itself.
+    await run('git', ['config', 'user.email', 'pact@localhost']);
+    await run('git', ['config', 'user.name', 'PACT']);
     await run('git', ['checkout', '-B', base]);
     // An empty commit on `base` gives the PR something real to diff against — a repo whose
     // only commit IS the generated backend has no meaningful base to compare to.

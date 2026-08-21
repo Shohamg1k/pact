@@ -108,6 +108,25 @@ export async function getTrace(chatId) {
   return res.json();
 }
 
+// Manual edit of one generated module — bypasses the repair-loop gates (see the route's
+// own comment in server/index.js), restarts the live backend preview if one is running
+// so the change is visible immediately, not just saved to disk.
+export async function saveModule(chatId, role, path, code) {
+  const res = await fetch(`${BASE}/chats/${chatId}/artifact/${role}/module`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path, code }),
+  });
+  return asJson(res);
+}
+
+// One row per API/business-rule, run live against the booted preview (gates/contracttests.js).
+// 404 before the preview has ever booted — asJson's raw-text fallback keeps that readable.
+export async function getContractTests(chatId) {
+  const res = await fetch(`${BASE}/chats/${chatId}/contracttests`);
+  return asJson(res);
+}
+
 // The 7-role graph — static, drives the agent selector's dependency awareness.
 export async function getAgentGraph() {
   const res = await fetch(`${BASE}/agents`);
@@ -133,8 +152,8 @@ export async function getUsage() {
 // VER-3/UI-5: the backend preview. orchestrator.js boots one automatically as soon as
 // the Backend agent commits, so there is no client-side "boot" call — GET /chats/:id
 // reports `preview` when one is live, and this proxies a real request to it.
-export async function requestPreview(chatId, { method, path, body }) {
-  return postJson(`/chats/${chatId}/preview/request`, { method, path, body });
+export async function requestPreview(chatId, { method, path, body, headers }) {
+  return postJson(`/chats/${chatId}/preview/request`, { method, path, body, headers });
 }
 
 /** Bring a previously-generated backend back up — previews live only as long as the
