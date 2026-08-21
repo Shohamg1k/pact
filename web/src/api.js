@@ -121,7 +121,15 @@ export async function getUsage() {
   return res.json();
 }
 
-// UI-5: KNOWN GAP — this route belongs to feat/runner-connectors and does not exist yet.
+// VER-3/UI-5: boot the backend manifest (write tree, npm install, in-memory Mongo, spawn
+// the generated server) and proxy real requests to it, once booted.
+export async function bootChat(chatId) {
+  return postJson(`/chats/${chatId}/boot`, {});
+}
+export async function getBootStatus(chatId) {
+  const res = await fetch(`${BASE}/chats/${chatId}/boot`);
+  return res.json();
+}
 export async function requestPreview(chatId, { method, path, body }) {
   return postJson(`/preview/${chatId}/request`, { method, path, body });
 }
