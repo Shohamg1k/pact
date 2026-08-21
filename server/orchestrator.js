@@ -5,6 +5,9 @@ import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { ensureRunDir, writeArtifact, appendLog, patchRun } from './kernel/store.js';
 import { runArchitect } from './agents/architect.js';
+import { runBackend } from './agents/backend.js';
+import { buildTrace } from './trace.js';
+import { buildProvenance } from './kernel/provenance.js';
 import { answerClarification } from './kernel/interrupts.js';
 import { getRun } from './kernel/store.js';
 
@@ -66,15 +69,19 @@ async function runPipeline(runId, brief, opts) {
   await setPhase(runId, 'agent1', 'passed', { gaps: result.gaps });
   await setPhase(runId, 'gateV1', 'passed', { contractHash: result.hash });
 
-  // --- everything below is still a stub: Agent 2 + Gate V2 land next on feat/core-pipeline ---
-  await setPhase(runId, 'agent2', 'running', { adapter: 'stub' });
-  await wait(600);
-  await setPhase(runId, 'agent2', 'passed', {});
+  // Agent 2 (Backend Engineer) + Gate V2 tiers 1-2 are real, mirroring the agent1/gateV1
+  // pattern above: the gate is embedded inside runBackend's repair loop (PRD §8.2/§16),
+  // so by the time it returns the manifest has already passed or been gracefully pruned.
+  await setPhase(runId, 'agent2', 'running', {});
+  const backendResult = await runBackend(runId, result.contract);
+  await setPhase(runId, 'agent2', 'passed', { gaps: backendResult.gaps });
+  await setPhase(runId, 'gateV2', 'passed', { backendHash: backendResult.hash });
 
-  await setPhase(runId, 'gateV2', 'running', {});
-  await wait(300);
-  await setPhase(runId, 'gateV2', 'passed', {});
+  const trace = buildTrace(result.contract, backendResult.manifest, backendResult.gaps);
+  await writeArtifact(runId, 'trace.json', trace);
+  await writeArtifact(runId, 'provenance.json', buildProvenance(backendResult.manifest));
 
+  // --- run/connectors remain a stub: runner.js + connectors/* land on feat/runner-connectors ---
   await setPhase(runId, 'run', 'running', {});
   await wait(300);
   await setPhase(runId, 'run', 'passed', { preview: `http://127.0.0.1:0/` });
