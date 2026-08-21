@@ -3,7 +3,8 @@
 // don't restructure it, without updating web/src/api.js in the same change.
 import express from 'express';
 import cors from 'cors';
-import { generateRoles, subscribe, resumeAfterAnswer, SelectionError } from './orchestrator.js';
+import path from 'node:path';
+import { generateRoles, subscribe, resumeAfterAnswer, SelectionError, getPreview } from './orchestrator.js';
 import {
   getChat,
   listChats,
@@ -14,12 +15,18 @@ import {
   createProject,
   listProjects,
   availableRoles,
+  chatDir,
 } from './kernel/chats.js';
 import { gate } from './gate.js';
 import { adapters, probeAll } from './adapters/index.js';
 import { launchCommandFor } from './adapters/registry.js';
 import { usageSnapshot } from './router.js';
 import { ROLE_IDS, ROLE_LABELS, ROLE_GRAPH } from './agents/registry.js';
+import { listInboxItems, getInboxItem, approveInboxItem, rejectInboxItem, ackInboxItem, findChatIdForItem } from './kernel/inbox.js';
+import { exportPostman } from './connectors/postman.js';
+import { exportGithubPR } from './connectors/github.js';
+import { exportMiro } from './connectors/miro.js';
+import { exportSlack } from './connectors/slack.js';
 
 const app = express();
 app.use(cors());
@@ -149,6 +156,131 @@ app.get('/api/agents', async (_req, res) => {
 app.get('/api/chats/:id/agents', async (req, res) => {
   const available = await availableRoles(req.params.id);
   res.json({ available: [...available] });
+});
+
+// UI-5/T8: proxy a real HTTP call to this chat's live preview server (orchestrator.js
+// boots one right after 'backend' commits). Not gated externally (gate.js) — this hits
+// the chat's OWN sandboxed generated app, not a third party, so no Inbox approval is
+// required, unlike a connector write.
+app.post('/api/chats/:id/preview/request', async (req, res) => {
+  const { method, path: urlPath, body } = req.body ?? {};
+  if (!method || typeof urlPath !== 'string' || !urlPath.startsWith('/')) {
+    return res.status(400).json({ code: 'INVALID_PREVIEW_REQUEST', detail: 'method and an absolute path are required' });
+  }
+  const preview = getPreview(req.params.id);
+  if (!preview) return res.status(404).json({ code: 'NO_PREVIEW', detail: 'this chat has no live preview server (backend has not booted one yet, or it failed to boot)' });
+  try {
+    const result = await preview.proxy(method, urlPath, body);
+    res.json(result);
+  } catch (e) {
+    res.status(502).json({ code: 'PREVIEW_UNREACHABLE', detail: e.message });
+  }
+});
+
+// §11 P1: the single decision queue — clarifications (kernel/interrupts.js) don't route
+// through kernel/inbox.js's list, since that module owns only connector_write/review; a
+// unified view across types can layer on top later without changing either module's shape.
+app.get('/api/inbox', async (req, res) => {
+  const { status, chatId } = req.query;
+  const chatIds = chatId ? [chatId] : await listChats();
+  const items = [];
+  for (const cid of chatIds) {
+    const chatItems = await listInboxItems(cid);
+    items.push(...chatItems.map((i) => ({ ...i, chatId: cid })));
+  }
+  res.json({ items: status ? items.filter((i) => i.status === status) : items });
+});
+
+async function resolveInboxTarget(req, res) {
+  const itemId = req.params.id;
+  const chatId = typeof req.body?.chatId === 'string' && req.body.chatId ? req.body.chatId : await findChatIdForItem(itemId);
+  if (!chatId) {
+    res.status(404).json({ code: 'NOT_FOUND' });
+    return null;
+  }
+  const item = await getInboxItem(chatId, itemId);
+  if (!item) {
+    res.status(404).json({ code: 'NOT_FOUND' });
+    return null;
+  }
+  return { chatId, item };
+}
+
+// LOCKED (§11): approving is what lets a subsequent POST /api/chats/:id/connectors/:name
+// through gate.js — refuses if the item is already tainted and hasn't been acked (SEC-4).
+app.post('/api/inbox/:id/approve', async (req, res) => {
+  const target = await resolveInboxTarget(req, res);
+  if (!target) return;
+  if (target.item.tainted) return res.status(403).json({ code: 'TAINT_UNACKNOWLEDGED', item: target.item });
+  await approveInboxItem(target.chatId, target.item.id);
+  res.json({ ok: true, item: await getInboxItem(target.chatId, target.item.id) });
+});
+
+app.post('/api/inbox/:id/reject', async (req, res) => {
+  const target = await resolveInboxTarget(req, res);
+  if (!target) return;
+  await rejectInboxItem(target.chatId, target.item.id);
+  res.json({ ok: true, item: await getInboxItem(target.chatId, target.item.id) });
+});
+
+// LOCKED (§11, §19 CLI-3, SEC-4): a human has read tainted content — required before an
+// approved-but-tainted item's action can execute.
+app.patch('/api/inbox/:id/ack', async (req, res) => {
+  const target = await resolveInboxTarget(req, res);
+  if (!target) return;
+  await ackInboxItem(target.chatId, target.item.id);
+  res.json({ ok: true, item: await getInboxItem(target.chatId, target.item.id) });
+});
+
+// LOCKED (§11, §18, SEC-1): reaches this handler only after gate.js confirms an approved,
+// non-tainted connector_write Inbox item for this exact {chatId, name} — see gate.js. A
+// failed connector never fails the chat (§18): `.pact/` files remain canonical regardless.
+app.post('/api/chats/:id/connectors/:name', async (req, res) => {
+  const chatId = req.params.id;
+  const { name } = req.params;
+  try {
+    const chat = await getChat(chatId);
+    if (!chat) return res.status(404).json({ code: 'NOT_FOUND', detail: 'unknown chatId' });
+    const contractRaw = await readChatFile(chatId, 'artifacts/architect.json');
+    const contract = contractRaw ? JSON.parse(contractRaw) : null;
+    const preview = getPreview(chatId);
+
+    let result;
+    switch (name) {
+      case 'postman': {
+        if (!contract) return res.status(409).json({ code: 'NOT_READY', detail: 'architect artifact not written yet' });
+        const outputDir = path.join(chatDir(chatId), 'connectors', 'postman');
+        result = await exportPostman(outputDir, contract, { baseUrl: preview?.baseUrl, ...req.body });
+        break;
+      }
+      case 'github': {
+        if (!contract) return res.status(409).json({ code: 'NOT_READY', detail: 'architect artifact not written yet' });
+        if (!preview) return res.status(409).json({ code: 'NOT_READY', detail: 'no generated tree on disk yet (backend has not booted a preview)' });
+        result = await exportGithubPR(path.join(chatDir(chatId), 'preview'), contract, { runId: chatId, ...req.body });
+        break;
+      }
+      case 'miro': {
+        if (!contract) return res.status(409).json({ code: 'NOT_READY', detail: 'architect artifact not written yet' });
+        result = await exportMiro(contract, req.body ?? {});
+        break;
+      }
+      case 'slack': {
+        const traceRaw = await readChatFile(chatId, 'trace.json');
+        const contractTestsRaw = await readChatFile(chatId, 'contracttests.json');
+        result = await exportSlack({ id: chatId, projectName: chat.title, status: chat.pendingRole ? 'running' : 'done' }, traceRaw ? JSON.parse(traceRaw) : null, {
+          preview: preview?.baseUrl,
+          contractTests: contractTestsRaw ? JSON.parse(contractTestsRaw) : null,
+          ...req.body,
+        });
+        break;
+      }
+      default:
+        return res.status(404).json({ code: 'UNKNOWN_CONNECTOR', detail: name });
+    }
+    res.json({ ok: true, result });
+  } catch (e) {
+    res.status(502).json({ code: 'CONNECTOR_FAILED', detail: e.message });
+  }
 });
 
 app.get('/api/adapters', (_req, res) => {

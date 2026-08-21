@@ -4,10 +4,12 @@
 // module on top of agents/engine.js's shared repair loop.
 import { readFile } from 'node:fs/promises';
 import crypto from 'node:crypto';
-import { runRepairLoop, commitArtifact, failJob, withForcedMeta } from './engine.js';
+import path from 'node:path';
+import { runRepairLoop, commitArtifact, failJob, withForcedMeta, MAX_REPAIRS } from './engine.js';
 import { BackendManifestSchema } from '../schemas/backend.js';
 import { runGateV2, repairFeedbackV2, pruneInvalidModules } from '../gates/v2.js';
-import { readChatFile } from '../kernel/chats.js';
+import { runBootCheck } from '../runner.js';
+import { readChatFile, chatDir } from '../kernel/chats.js';
 
 const ROLE_PROMPT = await readFile(new URL('../prompts/backend.md', import.meta.url), 'utf8');
 
@@ -31,7 +33,18 @@ export async function runBackend(chatId, contract, opts = {}) {
     repairNote ? { name: 'repair', content: repairNote, budget: 2000, policy: 'head' } : null,
   ].filter(Boolean);
 
-  const gate = async (manifest) => runGateV2(contract, manifest);
+  // VER-3 (PRD §16): tier 3 (boot) runs only after tiers 1 (syntax) and 2
+  // (coverage/drift/conformance) already pass — cheap before expensive (P6). runBootCheck
+  // returns the same {valid, errors} shape as runGateV2, so a non-boot manifest re-enters
+  // engine.js's SAME bounded repair loop exactly like a tier-1/2 failure, rather than a
+  // separate unbounded retry path. The boot directory lives under this chat's OWN dir
+  // (never hardcoded inside runner.js itself — see runner.js's file header).
+  const gate = async (manifest) => {
+    const structural = await runGateV2(contract, manifest);
+    if (!structural.valid) return structural;
+    const bootDir = path.join(chatDir(chatId), 'boot-check');
+    return runBootCheck(bootDir, contract, manifest);
+  };
 
   const loopResult = await runRepairLoop({
     chatId,
@@ -54,9 +67,16 @@ export async function runBackend(chatId, contract, opts = {}) {
     const pruned = pruneInvalidModules(loopResult.output, loopResult.errors);
     const candidate = pruned ? pruned.backend : loopResult.output;
     if (candidate.modules.length > 0) {
+      // Only re-checks tiers 1+2 (pruneInvalidModules never drops anything for BOOT_FAIL,
+      // since that's not a per-file error) — a persistent BOOT_FAIL from loopResult.errors
+      // must be folded in explicitly, or a manifest that never once booted would commit
+      // looking indistinguishable from one that passed (CORE-7/P4: never a silent hole).
       const gateResult = await runGateV2(contract, candidate);
       const remainingGaps = gateResult.errors.map((e) => `${e.code}: ${e.detail} (BLOCKED_ON_UPSTREAM)`);
-      return finish(chatId, loopResult, candidate, [...(pruned?.gaps ?? []), ...remainingGaps]);
+      const bootGaps = (loopResult.errors ?? [])
+        .filter((e) => e.code === 'BOOT_FAIL')
+        .map((e) => `${e.code}: ${e.detail} (BLOCKED_ON_UPSTREAM — server never booted after ${MAX_REPAIRS} repair attempts)`);
+      return finish(chatId, loopResult, candidate, [...(pruned?.gaps ?? []), ...remainingGaps, ...bootGaps]);
     }
   }
 
