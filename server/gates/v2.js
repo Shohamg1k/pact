@@ -84,14 +84,59 @@ export function checkDrift(contract, backend) {
   return errors;
 }
 
+/** Django composes its URL space via `path('<prefix>', include('<dotted.module>'))` in a
+ * root urlconf, delegating the actual `path(...)` registrations to another file entirely —
+ * live evidence: a real generation split `path('api/', include('tracker.urls'))` in
+ * config/urls.py from the six real path() calls in tracker/urls.py, and every one of them
+ * came back CONFORMANCE_MISMATCH because the extracted route was bare `/projects/...` with
+ * no `/api/` prefix at all. Scans every module up front (not just the one being extracted)
+ * because the prefix and the paths it applies to live in two different files. Returns a
+ * map from the included module's OWN dotted path (Python import convention: a file's
+ * dotted path is its `/`-joined directory path with `.py` dropped — `tracker/urls.py` ->
+ * `tracker.urls`, matching exactly what `include('tracker.urls')` names) to the prefix
+ * string it was mounted under. A no-op map for any stack other than Django, since no other
+ * stack here has this two-file indirection. */
+function collectDjangoIncludePrefixes(modules) {
+  const prefixes = new Map();
+  const includeRe = /path\(\s*['"]([^'"]*)['"]\s*,\s*include\(\s*['"]([\w.]+)['"]/g;
+  for (const m of modules) {
+    includeRe.lastIndex = 0;
+    let im;
+    while ((im = includeRe.exec(m.code))) prefixes.set(im[2], im[1]);
+  }
+  return prefixes;
+}
+
+/** The raw path literals used as an `include()` mount point within one module — these
+ * match the same generic `path(...)` regex as a real route registration (the regex has no
+ * way to see the second argument), so they must be excluded from that module's OWN
+ * extracted routes or a mount line like `path('api/', include('tracker.urls'))` gets
+ * counted as a phantom endpoint `/api/` with no real handler and no contract entry to
+ * match. */
+function djangoIncludeMountPaths(code) {
+  const mounts = new Set();
+  const re = /path\(\s*['"]([^'"]*)['"]\s*,\s*include\(/g;
+  let m;
+  while ((m = re.exec(code))) mounts.add(m[1]);
+  return mounts;
+}
+
 /** Extracts route registrations from every route-kind module, using the patterns of the
  * stack the contract actually declared (Express, FastAPI, Django, Spring — server/stacks.js)
  * rather than assuming Express. */
 export function extractRoutes(modules, stack) {
+  const includePrefixes = stack.id === 'django' ? collectDjangoIncludePrefixes(modules) : null;
   const routes = [];
   for (const m of modules) {
     if (m.kind !== 'route') continue;
-    for (const r of extractForStack(stack, m.code)) routes.push({ ...r, file: m.path });
+    const dotted = m.path.replace(/\.py$/, '').replace(/[\\/]/g, '.');
+    const prefix = includePrefixes?.get(dotted);
+    const mounts = stack.id === 'django' ? djangoIncludeMountPaths(m.code) : null;
+    for (const r of extractForStack(stack, m.code)) {
+      if (mounts?.has(r.path.replace(/^\/+/, ''))) continue; // an include() mount, not a real endpoint
+      const path = prefix ? `/${prefix.replace(/^\/+|\/+$/g, '')}/${r.path.replace(/^\/+/, '')}` : r.path;
+      routes.push({ ...r, path, file: m.path });
+    }
   }
   return routes;
 }

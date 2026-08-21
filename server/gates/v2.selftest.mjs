@@ -139,4 +139,38 @@ assert.ok(
   'a module citing a real assumption id must not be DRIFT_REJECTED',
 );
 
-console.log('v2.selftest.mjs — all 11 checks passed');
+// Django include()-prefix composition: a live run split `path('api/', include('tracker.urls'))`
+// in config/urls.py from the real path() calls in tracker/urls.py -- every one of those
+// routes came back CONFORMANCE_MISMATCH (missing the /api/ prefix entirely) and the mount
+// line itself was miscounted as a phantom `/api/` endpoint, until this was fixed.
+const djangoIncludeContract = {
+  ...contract,
+  stack: { default: 'Django', db: 'sqlite', api: 'django' },
+  apis: [
+    { id: 'API-01', feature_id: 'F-01', method: 'GET', path: '/api/projects', errors: [], rules: [] },
+    { id: 'API-02', feature_id: 'F-01', method: 'POST', path: '/api/projects', errors: [422], rules: [] },
+  ],
+};
+const djangoIncludeBackend = {
+  ...goodBackend,
+  modules: [
+    {
+      path: 'config/urls.py',
+      kind: 'route',
+      implements: ['API-01', 'API-02'],
+      code: "from django.urls import include, path\nurlpatterns = [\n    path('api/', include('tracker.urls')),\n]\n",
+      language: 'py',
+    },
+    {
+      path: 'tracker/urls.py',
+      kind: 'route',
+      implements: ['API-01', 'API-02'],
+      code: "from django.urls import path\nfrom . import views\nurlpatterns = [\n    path('projects', views.projects),\n]\n",
+      language: 'py',
+    },
+  ],
+};
+const includeErrors = checkConformance(djangoIncludeContract, djangoIncludeBackend);
+assert.deepStrictEqual(includeErrors, [], `include()-composed routes should conform with no errors, got: ${JSON.stringify(includeErrors)}`);
+
+console.log('v2.selftest.mjs — all 12 checks passed');
