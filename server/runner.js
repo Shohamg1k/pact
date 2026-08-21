@@ -245,12 +245,40 @@ function getFreePort() {
   });
 }
 
-/**
- * `npm install` in `generatedDir`. Skips the actual install (but still resolves) when
- * package.json is byte-identical to the last install AND node_modules already exists —
- * cheap-before-expensive (P6) across the bounded repair loop, which rewrites the tree on
- * every attempt but rarely changes dependencies.
- */
+// --- Python interpreter resolution (Windows shebang gotcha) ------------------------------
+
+let cachedPythonExe;
+/** Resolves the concrete interpreter `py -m pip install` actually uses, once, and caches
+ * it. On Windows, `py <script>.py` and `py -m <module>` can resolve to DIFFERENT
+ * interpreters: `-m` ignores the target file entirely, but running a .py FILE makes
+ * py.exe honor a PEP-397 shebang line inside it (`#!/usr/bin/env python`) — and Django's
+ * own generated manage.py always carries exactly that shebang. Live evidence: `py -m pip
+ * install -r requirements.txt` installed django into this machine's default `py`
+ * interpreter (3.14), but `py manage.py migrate` then read manage.py's shebang and ran
+ * under a DIFFERENT installed Python (3.12) that never had django — ModuleNotFoundError,
+ * from the "same" `py` command that had just succeeded one line earlier. Resolving to an
+ * ABSOLUTE python.exe path and using it everywhere bypasses shebang resolution entirely (a
+ * direct path invocation isn't the py.exe launcher stub, so it never reads the shebang),
+ * guaranteeing install and every later run are the same interpreter. */
+export async function resolvePythonExe() {
+  if (cachedPythonExe) return cachedPythonExe;
+  try {
+    const { stdout } = await execAsync('py -c "import sys; print(sys.executable)"');
+    cachedPythonExe = stdout.trim() || 'py';
+  } catch {
+    cachedPythonExe = 'py'; // resolution itself failed -- fall back to the launcher rather than hard-erroring here
+  }
+  return cachedPythonExe;
+}
+
+/** Rewrites a stack command spec's `py` to the resolved concrete interpreter path — a
+ * no-op for every other cmd (npm, node, java). Applied at every python-family spawn site
+ * (install, postInstall, start) so all three are guaranteed the same interpreter. */
+export async function resolvePythonCmd(spec) {
+  if (spec.cmd !== 'py') return spec;
+  return { ...spec, cmd: await resolvePythonExe() };
+}
+
 /** Runs one setup subprocess to completion (install, migrate, ...) inside generatedDir,
  * capturing stdout/stderr and enforcing a timeout. Shared by installDeps and
  * runPostInstall so both fail the exact same way: a timeout or non-zero exit rejects with
@@ -313,7 +341,8 @@ export async function installDeps(generatedDir, opts = {}) {
     return { skipped: true, stdout: '', stderr: '' };
   }
 
-  const result = await runSetupStep(stack.install.cmd, stack.install.args, generatedDir, timeoutMs, `${stack.install.cmd} install`);
+  const install = await resolvePythonCmd(stack.install);
+  const result = await runSetupStep(install.cmd, install.args, generatedDir, timeoutMs, `${stack.install.cmd} install`);
   await writeFile(markerPath, depsHash, 'utf8');
   return { skipped: false, ...result };
 }
@@ -326,9 +355,9 @@ export async function installDeps(generatedDir, opts = {}) {
 export async function runPostInstall(generatedDir, manifest, stack, opts = {}) {
   if (!stack.postInstall) return { skipped: true, stdout: '', stderr: '' };
   const entry = manifest.server_entry || stack.entryDefault;
-  const spec = stack.postInstall(entry);
+  const spec = await resolvePythonCmd(stack.postInstall(entry));
   const timeoutMs = opts.timeoutMs ?? DEFAULT_INSTALL_TIMEOUT_MS;
-  const result = await runSetupStep(spec.cmd, spec.args, generatedDir, timeoutMs, `${spec.cmd} ${spec.args.join(' ')}`);
+  const result = await runSetupStep(spec.cmd, spec.args, generatedDir, timeoutMs, `${stack.postInstall(entry).cmd} ${spec.args.join(' ')}`);
   return { skipped: false, ...result };
 }
 
@@ -350,9 +379,9 @@ export async function startMemoryMongo(opts = {}) {
 /** Spawns the generated server as a child process. Returns a handle with rolling
  * stdout/stderr buffers (capped, so a crash-looping server can't leak memory) and exit
  * tracking so callers can fail fast instead of waiting out the full health-check timeout. */
-function startServerProcess(generatedDir, manifest, env, stack, port) {
+async function startServerProcess(generatedDir, manifest, env, stack, port) {
   const entry = manifest.server_entry || stack.entryDefault;
-  const spec = stack.start(entry, { port });
+  const spec = await resolvePythonCmd(stack.start(entry, { port }));
   // Node resolves to the real node.exe so child.pid IS the process to kill; other
   // launchers (py, java) are PATH shims on Windows and need a shell, which is exactly
   // why killTree walks the process tree rather than killing one pid.
@@ -465,7 +494,7 @@ export async function runBootCheck(generatedDir, contract, manifest, opts = {}) 
 
   const port = await getFreePort();
   const baseUrl = `http://127.0.0.1:${port}`;
-  const handle = startServerProcess(
+  const handle = await startServerProcess(
     generatedDir,
     manifest,
     { PACT_RUNNER_PORT: String(port), ...stack.env({ port, mongoUri: mongo.uri, dbPath: path.join(generatedDir, 'pact.db') }) },
@@ -521,7 +550,7 @@ export async function startPreviewServer(generatedDir, contract, manifest, opts 
   const mongo = stack.db === 'mongo' ? await startMemoryMongo(opts.mongo) : { uri: '', stop: async () => {} };
   const port = await getFreePort();
   const baseUrl = `http://127.0.0.1:${port}`;
-  const handle = startServerProcess(
+  const handle = await startServerProcess(
     generatedDir,
     manifest,
     { PACT_RUNNER_PORT: String(port), ...stack.env({ port, mongoUri: mongo.uri, dbPath: path.join(generatedDir, 'pact.db') }) },

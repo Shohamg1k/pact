@@ -13,6 +13,7 @@ import {
   writeGeneratedTree,
   installDeps,
   runBootCheck,
+  resolvePythonCmd,
 } from './runner.js';
 import { resolveStack } from './stacks.js';
 import { sha256 } from './kernel/store.js';
@@ -161,5 +162,23 @@ try {
 } finally {
   await rm(pyDir, { recursive: true, force: true }).catch(() => {});
 }
+
+// resolvePythonCmd: regression for the Windows shebang gotcha. `py -m pip install`
+// (installDeps) and `py manage.py ...` (runPostInstall/start) can resolve to DIFFERENT
+// interpreters -- PEP-397 shebang resolution only kicks in when py.exe executes a FILE,
+// not for `-m`. Live evidence: on this machine `py -m pip install django` succeeded
+// against Python 3.14, but `py manage.py migrate` then read manage.py's own
+// `#!/usr/bin/env python` shebang and ran under Python 3.12, which never had django --
+// ModuleNotFoundError, from a command that looked identical (`py ...`) to the one that had
+// just succeeded. resolvePythonCmd must rewrite `py` to a concrete, absolute interpreter
+// path (bypassing shebang resolution entirely) so every python-family spawn site uses the
+// exact same interpreter regardless of whether it's a `-m` call or a file execution.
+const resolved = await resolvePythonCmd({ cmd: 'py', args: ['-V'] });
+assert.notStrictEqual(resolved.cmd, 'py', 'resolvePythonCmd should rewrite the ambiguous launcher to a concrete interpreter path');
+assert.ok(path.isAbsolute(resolved.cmd), `resolved python cmd should be an absolute path, got: ${resolved.cmd}`);
+assert.deepStrictEqual(resolved.args, ['-V'], 'args should pass through unchanged');
+const untouched = await resolvePythonCmd({ cmd: 'node', args: ['server.js'] });
+assert.strictEqual(untouched.cmd, 'node', 'a non-python cmd must pass through unchanged');
+console.log(`runner.selftest.mjs — resolvePythonCmd pins 'py' to ${resolved.cmd}`);
 
 console.log('runner.selftest.mjs — all checks passed');
