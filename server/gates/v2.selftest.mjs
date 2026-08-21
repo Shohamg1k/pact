@@ -1,5 +1,5 @@
 import assert from 'node:assert';
-import { runGateV2, checkDrift, checkConformance, pruneInvalidModules } from './v2.js';
+import { runGateV2, checkDrift, checkConformance, pruneInvalidModules, collectContractIds } from './v2.js';
 
 const contract = {
   meta: { schema: 'arch-contract/v1', id: 'PACT-test', completeness_score: 0.9 },
@@ -60,4 +60,83 @@ assert.strictEqual(pruned.backend.modules.length, driftEmpty.modules.length - 1)
 assert.ok(!pruned.backend.modules.some((m) => m.path === 'routes/loyalty.js'));
 assert.ok(pruned.gaps[0].includes('DRIFT_REJECTED'));
 
-console.log('v2.selftest.mjs — all 7 checks passed');
+// checkConformance normalizes path-param syntax across stacks (regression: a live FastAPI
+// run had the architect write `{book_id}` and the generated code match it verbatim — a
+// literal-string conformance check rejected perfectly conforming code).
+const fastapiContract = {
+  ...contract,
+  stack: { default: 'FastAPI', db: 'sqlite', api: 'fastapi' },
+  apis: [{ id: 'API-01', feature_id: 'F-01', method: 'GET', path: '/books/{book_id}', errors: [404], rules: [] }],
+};
+const fastapiBackend = {
+  ...goodBackend,
+  modules: [
+    {
+      path: 'main.py',
+      kind: 'route',
+      implements: ['API-01'],
+      code: '@app.get("/books/{book_id}")\ndef get_book(book_id: int):\n    return {}\n',
+      language: 'py',
+    },
+  ],
+};
+assert.strictEqual(checkConformance(fastapiContract, fastapiBackend).length, 0, 'FastAPI {param} path should conform to itself');
+
+// Django regression: the URLconf carries no HTTP method (stacks.js methodInRoute: false),
+// and the model wrote the param in Django's own <int:name> syntax with a DIFFERENT name
+// than the contract's {name} (projectId vs project_id) -- both are live-observed shapes.
+// A method-less route must match ANY contract method declared for that path, and the
+// param name must not matter, only its position.
+const djangoContract = {
+  ...contract,
+  stack: { default: 'Django', db: 'sqlite', api: 'django' },
+  apis: [
+    { id: 'API-01', feature_id: 'F-01', method: 'GET', path: '/api/projects/{projectId}/tasks', errors: [404], rules: [] },
+    { id: 'API-02', feature_id: 'F-01', method: 'POST', path: '/api/projects/{projectId}/tasks', errors: [422], rules: [] },
+  ],
+};
+const djangoBackend = {
+  ...goodBackend,
+  modules: [
+    {
+      path: 'tracker/urls.py',
+      kind: 'route',
+      implements: ['API-01', 'API-02'],
+      code: "urlpatterns = [\n    path('api/projects/<int:project_id>/tasks/', views.tasks),\n]\n",
+      language: 'py',
+    },
+  ],
+};
+assert.strictEqual(
+  checkConformance(djangoContract, djangoBackend).length,
+  0,
+  'a single Django path() must satisfy both the GET and POST the contract declared for it',
+);
+
+// Negative control: the fix must not become so lenient that a genuinely wrong path passes.
+const djangoWrongPath = {
+  ...goodBackend,
+  modules: [{ path: 'tracker/urls.py', kind: 'route', implements: ['API-01'], code: "urlpatterns = [\n    path('api/projects/<int:pk>/members/', views.members),\n]\n", language: 'py' }],
+};
+const wrongErrors = checkConformance({ ...djangoContract, apis: [djangoContract.apis[0]] }, djangoWrongPath);
+assert.ok(
+  wrongErrors.some((e) => e.code === 'CONFORMANCE_MISMATCH' && e.subject_id === 'API-01'),
+  'a genuinely different path must still be rejected, not waved through by the method-agnostic match',
+);
+
+// Regression: citing a real assumption id must NOT be DRIFT_REJECTED. A live Django run
+// had a settings.py citing "AS-05" (a real assumptions[] entry) get pruned as unknown-id
+// drift, which took the whole app's settings module down with it.
+const contractWithAssumption = { ...contract, assumptions: [{ id: 'AS-01', statement: 'single-tenant, no auth', confidence: 0.6, source: 'brief-silence' }] };
+assert.ok(collectContractIds(contractWithAssumption).has('AS-01'), 'collectContractIds must include assumption ids');
+const settingsBackend = {
+  ...goodBackend,
+  modules: [...goodBackend.modules, { path: 'app/settings.py', kind: 'config', implements: ['AS-01'], code: 'DEBUG = True\n', language: 'py' }],
+};
+const assumptionDriftErrors = checkDrift(contractWithAssumption, settingsBackend);
+assert.ok(
+  !assumptionDriftErrors.some((e) => e.subject_id === 'app/settings.py'),
+  'a module citing a real assumption id must not be DRIFT_REJECTED',
+);
+
+console.log('v2.selftest.mjs — all 11 checks passed');

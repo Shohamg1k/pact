@@ -27,14 +27,26 @@ export async function runTier1(backend) {
 }
 
 /** Every ID a contract element can legitimately be cited by: features, apis, collections,
- * and business rules (parsed from their "BR-xx: ..." prefix, PRD §8.1 example). Exported
- * so gates/frontend.js and gates/qa.js can reuse the exact same id space rather than
- * re-deriving it — one shared notion of "a real contract id" across every role. */
+ * assumptions, and business rules (parsed from their "BR-xx: ..." prefix, PRD §8.1
+ * example). Exported so gates/frontend.js and gates/qa.js can reuse the exact same id
+ * space rather than re-deriving it — one shared notion of "a real contract id" across
+ * every role.
+ *
+ * `assumptions` was missing here despite schemas/contract.js's AssumptionSchema giving
+ * every one its own `id` (AS-NN) exactly like a feature or collection — live evidence: a
+ * Django run's backend cited a real assumption ("AS-05: the API layer is built with
+ * Django REST Framework...", justifying its settings.py choices) and DRIFT_REJECTED tier 2
+ * rejected the citation as an unknown id, which fell through to P4's pruning and silently
+ * dropped settings.py from the committed manifest — a Django tree with no settings module
+ * cannot start regardless of anything else being correct. This omission isn't
+ * stack-specific: any module on any stack citing an assumption id hit the same false
+ * rejection. */
 export function collectContractIds(contract) {
   const ids = new Set();
   for (const f of contract.features) ids.add(f.id);
   for (const a of contract.apis) ids.add(a.id);
   for (const c of contract.collections ?? []) ids.add(c.id);
+  for (const a of contract.assumptions ?? []) ids.add(a.id);
   for (const r of contract.business_rules ?? []) {
     const m = r.match(/^([A-Za-z]+-\d+)/);
     if (m) ids.add(m[1]);
@@ -84,32 +96,74 @@ export function extractRoutes(modules, stack) {
   return routes;
 }
 
+/** Reduces a declared path to a stack-agnostic shape for comparison: every param-
+ * placeholder syntax (Express `:id`, OpenAPI/FastAPI `{id}`, Django `<int:pk>`) becomes
+ * the same token, and a trailing slash (Django's own URL convention — `path('books/')`,
+ * never `path('books')`) doesn't create a phantom mismatch against a contract path that
+ * has none. Positional, not name-aware: `{projectId}` and `<int:project_id>` compare
+ * equal by POSITION, which is correct here — the same architect-declared param can and
+ * (verified live, a real Django contract) does get a different, stack-idiomatic name once
+ * the model writes it in framework-native syntax. */
+function normalizePath(p) {
+  const withoutParams = p
+    .replace(/:([A-Za-z_][A-Za-z0-9_]*)/g, ':param')
+    .replace(/\{[A-Za-z_][A-Za-z0-9_]*\}/g, ':param')
+    .replace(/<(?:[A-Za-z_]+:)?[A-Za-z_][A-Za-z0-9_]*>/g, ':param');
+  const trimmed = withoutParams.replace(/\/+$/, '');
+  return trimmed === '' ? '/' : trimmed;
+}
+
 /** Conformance (VER-2): the router.<method>('<path>') set extracted from code, diffed
  * against the contract's declared APIs. This also IS the API coverage check — a contract
- * API with no matching route in code is definitionally an uncovered feature. */
+ * API with no matching route in code is definitionally an uncovered feature.
+ *
+ * Path comparison is normalized (see normalizePath) rather than a literal string match —
+ * this stayed Express-string-exact until a live FastAPI/Django run showed the architect
+ * writing `{book_id}` (OpenAPI/FastAPI's own syntax, which the generated code also used)
+ * and Django's own generated code writing `<int:project_id>`/`<int:projectId>` for the
+ * exact same declared param: a literal match rejected conforming code on every
+ * parameterized route for both stacks. Method comparison treats a `null` extracted method
+ * (Django: the URLconf itself never carries the verb, see stacks.js's methodInRoute) as
+ * matching whatever method the contract declared for that path, rather than guessing GET
+ * and rejecting every real POST/PATCH/DELETE route Django ever generates. */
 export function checkConformance(contract, backend) {
   const codeRoutes = extractRoutes(backend.modules, resolveStack(contract));
-  const codeSet = new Set(codeRoutes.map((r) => `${r.method} ${r.path}`));
-  const contractSet = new Set(contract.apis.map((a) => `${a.method} ${a.path}`));
+
+  const codeByPath = new Map(); // normalized path -> Set<method>, 'ANY' for a method-less route
+  for (const r of codeRoutes) {
+    const np = normalizePath(r.path);
+    if (!codeByPath.has(np)) codeByPath.set(np, new Set());
+    codeByPath.get(np).add(r.method ?? 'ANY');
+  }
+  const contractByPath = new Map(); // normalized path -> Set<method>
+  for (const a of contract.apis) {
+    const np = normalizePath(a.path);
+    if (!contractByPath.has(np)) contractByPath.set(np, new Set());
+    contractByPath.get(np).add(a.method);
+  }
+
   const errors = [];
   for (const a of contract.apis) {
-    const key = `${a.method} ${a.path}`;
-    if (!codeSet.has(key)) {
+    const methods = codeByPath.get(normalizePath(a.path));
+    const matched = methods && (methods.has(a.method) || methods.has('ANY'));
+    if (!matched) {
       errors.push({
         code: 'CONFORMANCE_MISMATCH',
         subject_id: a.id,
-        detail: `declared ${key} (${a.id}) has no matching router.${a.method.toLowerCase()}('${a.path}') in the generated code`,
+        detail: `declared ${a.method} ${a.path} (${a.id}) has no matching router.${a.method.toLowerCase()}('${a.path}') in the generated code`,
         recoverable: true,
       });
     }
   }
   for (const r of codeRoutes) {
-    const key = `${r.method} ${r.path}`;
-    if (!contractSet.has(key)) {
+    const np = normalizePath(r.path);
+    const declaredMethods = contractByPath.get(np);
+    const matched = declaredMethods && (r.method === null || declaredMethods.has(r.method));
+    if (!matched) {
       errors.push({
         code: 'CONFORMANCE_MISMATCH',
         subject_id: r.file,
-        detail: `generated route ${key} in ${r.file} is not declared in the contract's apis[]`,
+        detail: `generated route ${r.method ?? '(method not in URLconf)'} ${r.path} in ${r.file} is not declared in the contract's apis[]`,
         recoverable: true,
       });
     }

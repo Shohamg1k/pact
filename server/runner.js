@@ -251,6 +251,36 @@ function getFreePort() {
  * cheap-before-expensive (P6) across the bounded repair loop, which rewrites the tree on
  * every attempt but rarely changes dependencies.
  */
+/** Runs one setup subprocess to completion (install, migrate, ...) inside generatedDir,
+ * capturing stdout/stderr and enforcing a timeout. Shared by installDeps and
+ * runPostInstall so both fail the exact same way: a timeout or non-zero exit rejects with
+ * {stdout, stderr} attached, which bootError folds into a targeted repair prompt. */
+function runSetupStep(cmd, args, cwd, timeoutMs, label) {
+  return new Promise((resolve, reject) => {
+    const p = spawn(cmd, args, {
+      cwd,
+      shell: true, // npm/pip/manage.py are PATH shims or need shell quoting on Windows — same convention as adapters/spawn.js
+    });
+    let stdout = '';
+    let stderr = '';
+    const timer = setTimeout(async () => {
+      await killTree(p.pid);
+      reject(Object.assign(new Error(`${label} timed out after ${timeoutMs}ms`), { stdout, stderr }));
+    }, timeoutMs);
+    p.stdout.on('data', (d) => (stdout += d));
+    p.stderr.on('data', (d) => (stderr += d));
+    p.on('error', (e) => {
+      clearTimeout(timer);
+      reject(e);
+    });
+    p.on('exit', (code) => {
+      clearTimeout(timer);
+      if (code === 0) return resolve({ stdout, stderr });
+      reject(Object.assign(new Error(`${label} exited with code ${code}`), { stdout, stderr: stderr.slice(-2000) }));
+    });
+  });
+}
+
 export async function installDeps(generatedDir, opts = {}) {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_INSTALL_TIMEOUT_MS;
   const stack = opts.stack ?? resolveStack(null);
@@ -271,31 +301,22 @@ export async function installDeps(generatedDir, opts = {}) {
     return { skipped: true, stdout: '', stderr: '' };
   }
 
-  const result = await new Promise((resolve, reject) => {
-    const p = spawn(stack.install.cmd, stack.install.args, {
-      cwd: generatedDir,
-      shell: true, // npm is a .cmd shim on Windows — same convention as adapters/spawn.js
-    });
-    let stdout = '';
-    let stderr = '';
-    const timer = setTimeout(async () => {
-      await killTree(p.pid);
-      reject(Object.assign(new Error(`npm install timed out after ${timeoutMs}ms`), { stdout, stderr }));
-    }, timeoutMs);
-    p.stdout.on('data', (d) => (stdout += d));
-    p.stderr.on('data', (d) => (stderr += d));
-    p.on('error', (e) => {
-      clearTimeout(timer);
-      reject(e);
-    });
-    p.on('exit', (code) => {
-      clearTimeout(timer);
-      if (code === 0) return resolve({ stdout, stderr });
-      reject(Object.assign(new Error(`npm install exited with code ${code}`), { stdout, stderr: stderr.slice(-2000) }));
-    });
-  });
-
+  const result = await runSetupStep(stack.install.cmd, stack.install.args, generatedDir, timeoutMs, `${stack.install.cmd} install`);
   await writeFile(markerPath, depsHash, 'utf8');
+  return { skipped: false, ...result };
+}
+
+/** Runs a stack's declared post-install step (today: Django's `manage.py migrate
+ * --noinput`, which must happen before first boot or every ORM-backed endpoint 500s
+ * against a database with no tables). A no-op for stacks that don't declare one — always
+ * re-run rather than hash-cached like installDeps, since migrate is itself idempotent and
+ * cheap relative to a full dependency install. */
+export async function runPostInstall(generatedDir, manifest, stack, opts = {}) {
+  if (!stack.postInstall) return { skipped: true, stdout: '', stderr: '' };
+  const entry = manifest.server_entry || stack.entryDefault;
+  const spec = stack.postInstall(entry);
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_INSTALL_TIMEOUT_MS;
+  const result = await runSetupStep(spec.cmd, spec.args, generatedDir, timeoutMs, `${spec.cmd} ${spec.args.join(' ')}`);
   return { skipped: false, ...result };
 }
 
@@ -418,8 +439,9 @@ export async function runBootCheck(generatedDir, contract, manifest, opts = {}) 
 
   try {
     await installDeps(generatedDir, { timeoutMs: opts.installTimeoutMs, stack });
+    await runPostInstall(generatedDir, manifest, stack, { timeoutMs: opts.installTimeoutMs });
   } catch (e) {
-    return bootError(`${stack.install?.cmd ?? 'dependency'} install failed`, e, manifest, e.stderr);
+    return bootError(`${stack.install?.cmd ?? 'dependency'} setup failed`, e, manifest, e.stderr);
   }
 
   let mongo;
@@ -481,6 +503,7 @@ export async function startPreviewServer(generatedDir, contract, manifest, opts 
   }
   await writeGeneratedTree(generatedDir, manifest, stack);
   await installDeps(generatedDir, { timeoutMs: opts.installTimeoutMs, stack });
+  await runPostInstall(generatedDir, manifest, stack, { timeoutMs: opts.installTimeoutMs });
 
   // Only Mongo-backed stacks pay for an in-memory mongod; SQLite stacks just get a path.
   const mongo = stack.db === 'mongo' ? await startMemoryMongo(opts.mongo) : { uri: '', stop: async () => {} };

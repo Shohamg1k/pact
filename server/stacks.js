@@ -81,12 +81,24 @@ export const STACKS = {
     entryDefault: 'manage.py',
     manifestFile: 'requirements.txt',
     install: { cmd: 'py', args: ['-m', 'pip', 'install', '--quiet', '--disable-pip-version-check', '-r', 'requirements.txt'] },
+    // Django's ORM has no tables until this runs; every model-backed endpoint would 500
+    // on first boot without it. Runs once per boot (runner.js's runPostInstall), always —
+    // migrate is itself idempotent, so this isn't hash-cached the way installDeps is.
+    postInstall: (entry) => ({ cmd: 'py', args: [entry, 'migrate', '--noinput'] }),
     start: (entry, { port }) => ({ cmd: 'py', args: [entry, 'runserver', `127.0.0.1:${port}`, '--noreload'] }),
     env: ({ port }) => ({ PORT: String(port), DJANGO_DEBUG: '1' }),
     db: 'sqlite',
     syntax: 'py_compile',
     runnable: true,
-    // urls.py: path('books/', ...) / re_path(...)
+    // urls.py: path('books/', ...) / re_path(...) — Django's URLconf genuinely does not
+    // encode the HTTP method (that lives in the view function's dispatch, e.g. a
+    // `request.method == 'POST'` check or a DRF `@api_view(['GET','POST'])`), so unlike
+    // every other stack here this regex has no method group to capture. methodInRoute:
+    // false tells extractRoutes/checkConformance not to guess GET for the missing group —
+    // a guess would (and, live, did: a real Django run showed every declared POST/PATCH
+    // falsely rejected as CONFORMANCE_MISMATCH because the same path()-registered route
+    // was always read back as GET) reject perfectly conforming code.
+    methodInRoute: false,
     routeRe: [/\b(?:path|re_path)\(\s*['"]([^'"]*)['"]/gi],
     deps: { django: '' },
     promptRules: [
@@ -168,7 +180,12 @@ export function extractRoutes(stack, code) {
       const methodish = groups.find((g) => /^(get|post|put|patch|delete)$/i.test(g));
       const pathish = groups.find((g) => g.startsWith('/') || !/^(get|post|put|patch|delete)$/i.test(g));
       if (!pathish) continue;
-      out.push({ method: (methodish ?? 'GET').toUpperCase(), path: pathish.startsWith('/') ? pathish : `/${pathish}` });
+      // A route pattern with no method group and a stack that says method isn't part of
+      // its route registration syntax (Django) is genuinely unknown — `null`, not a
+      // guessed GET (see the django profile's methodInRoute comment for why that guess is
+      // actively wrong, not just imprecise).
+      const method = methodish ? methodish.toUpperCase() : stack.methodInRoute === false ? null : 'GET';
+      out.push({ method, path: pathish.startsWith('/') ? pathish : `/${pathish}` });
     }
   }
   return out;
