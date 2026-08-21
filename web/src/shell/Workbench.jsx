@@ -329,10 +329,10 @@ export default function Workbench() {
       case 'artifact':
       default: {
         const art = a[tab.role];
-        if (tab.role === 'pm') return <div className="pad"><PMViewer artifact={art} /></div>;
-        if (tab.role === 'uiux') return <div className="pad"><UiuxViewer artifact={art} /></div>;
-        if (tab.role === 'qa') return <div className="pad"><QAViewer artifact={art} /></div>;
-        if (tab.role === 'docs') return <div className="pad"><DocsViewer artifact={art} /></div>;
+        if (tab.role === 'pm') return <PMViewer artifact={art} />;
+        if (tab.role === 'uiux') return <UiuxViewer artifact={art} contract={a.architect} />;
+        if (tab.role === 'qa') return <QAViewer artifact={art} contract={a.architect} />;
+        if (tab.role === 'docs') return <DocsViewer artifact={art} />;
         return <div className="pad"><pre className="code-block">{JSON.stringify(art, null, 2)}</pre></div>;
       }
     }
