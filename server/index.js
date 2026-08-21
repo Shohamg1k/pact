@@ -2,7 +2,7 @@
 // extend it, don't restructure it, without updating web/src/api.js in the same change.
 import express from 'express';
 import cors from 'cors';
-import { startRun, subscribe, resumeAfterAnswer } from './orchestrator.js';
+import { startRun, subscribe, resumeAfterAnswer, getPreview } from './orchestrator.js';
 import { getRun, readArtifact, listRuns } from './kernel/store.js';
 import { gate } from './gate.js';
 import { adapters, probeAll } from './adapters/index.js';
@@ -78,6 +78,24 @@ app.post('/api/runs/:id/answer', async (req, res) => {
   if (!itemId || !answer) return res.status(400).json({ code: 'INVALID_ANSWER' });
   await resumeAfterAnswer(req.params.id, itemId, answer);
   res.json({ ok: true });
+});
+
+// UI-5/T8: proxy a real HTTP call to the generated app's live preview server. Not
+// EXTERNAL_PREFIXES-gated (gate.js) — this hits the run's OWN sandboxed generated app, not
+// a third party, so no Inbox approval is required, unlike a connector write.
+app.post('/api/preview/:id/request', async (req, res) => {
+  const { method, path: urlPath, body } = req.body ?? {};
+  if (!method || typeof urlPath !== 'string' || !urlPath.startsWith('/')) {
+    return res.status(400).json({ code: 'INVALID_PREVIEW_REQUEST', detail: 'method and an absolute path are required' });
+  }
+  const preview = getPreview(req.params.id);
+  if (!preview) return res.status(404).json({ code: 'NO_PREVIEW', detail: 'this run has no live preview server (not booted yet, or it failed to boot)' });
+  try {
+    const result = await preview.proxy(method, urlPath, body);
+    res.json(result);
+  } catch (e) {
+    res.status(502).json({ code: 'PREVIEW_UNREACHABLE', detail: e.message });
+  }
 });
 
 app.get('/api/adapters', (_req, res) => {
