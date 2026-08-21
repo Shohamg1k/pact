@@ -69,6 +69,7 @@ export default function Workbench() {
   const [startingBackend, setStartingBackend] = useState(false);
   const [inboxCount, setInboxCount] = useState(0);
   const [showRail, setShowRail] = useState(true);
+  const [interactive, setInteractive] = useState(false);
   const folderRef = useRef(null);
   const unsubRef = useRef(null);
 
@@ -200,7 +201,7 @@ export default function Workbench() {
   async function handleGenerate() {
     setBusy(true);
     setGenError(null);
-    const res = await generateRoles(activeChatId, [...selected]);
+    const res = await generateRoles(activeChatId, [...selected], { mode: interactive ? 'interactive' : 'batch' });
     setBusy(false);
     if (!res.ok) {
       setGenError(res.body?.details?.map((d) => d.detail).join(' · ') || res.body?.code || 'Could not start that selection.');
@@ -297,6 +298,7 @@ export default function Workbench() {
         <SidePanel
           view={view} roles={roles} existing={existing} running={running} failed={failed}
           selected={selected} roleLabels={roleLabels} busy={busy || !!running} error={genError}
+          interactive={interactive} onInteractive={setInteractive}
           activeChatId={activeChatId} chat={chat} artifacts={artifacts}
           onToggle={(id) => setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; })}
           onGenerate={handleGenerate} onOpenAdapters={() => setShowAdapters(true)}

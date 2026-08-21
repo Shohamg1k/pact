@@ -85,8 +85,10 @@ export async function generateRoles(chatId, roles, opts = {}) {
 
 async function runBatch(chatId, order, opts) {
   const chat = await getChat(chatId);
+  const mode = opts.mode ?? chat.mode ?? 'batch';
+  if (mode !== chat.mode) await patchChat(chatId, { mode });
   const runOpts = {
-    mode: opts.mode ?? chat.mode ?? 'batch',
+    mode,
     projectName: chat.projectId ?? null, // memory.js keys by project name; a chat's projectId doubles as that key
     pinnedAdapter: opts.pinnedAdapter ?? chat.pinnedAdapter ?? undefined,
   };
@@ -185,6 +187,9 @@ async function refreshTrace(chatId) {
  * was paused on this role, continuing with the remaining roles in its original order. */
 export async function resumeAfterAnswer(chatId, itemId, answer, overrideOpts = {}) {
   await answerClarification(chatId, itemId, answer);
+  await appendChatLog(chatId, 'worklog.jsonl', {
+    ts: Date.now(), phase: 'human', event: 'clarification_answered', detail: { itemId, answer },
+  });
   const chat = await getChat(chatId);
   const order = chat.pendingOrder ?? [chat.pendingRole].filter(Boolean);
   const opts = { mode: chat.mode ?? 'batch', pinnedAdapter: chat.pinnedAdapter ?? undefined, ...overrideOpts };

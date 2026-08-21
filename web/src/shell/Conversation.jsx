@@ -14,7 +14,7 @@ const EVENT_STYLE = {
   failover: { bullet: '·', cls: '', label: (e, l) => `${l(e.phase)} failed over to another engine, continuing from partial output` },
   exhausted: { bullet: '·', cls: 'err', label: (e, l) => `${l(e.phase)} exhausted its repair budget` },
   awaiting_human: { bullet: '·', cls: '', label: (e, l) => `${l(e.phase)} raised one clarifying question` },
-  running: { bullet: '›', cls: 'head', label: (e, l) => `${l(e.phase)} started` },
+  clarification_answered: { bullet: '·', cls: 'ok', label: (e) => `You answered: "${(e.detail?.answer ?? '').slice(0, 90)}${(e.detail?.answer ?? '').length > 90 ? '…' : ''}"` },
   contract_tests: { bullet: '·', cls: 'ok', label: (e) => `Contract tests: ${e.detail?.passed ?? 0}/${e.detail?.total ?? 0} passing` },
 };
 
@@ -43,8 +43,13 @@ export default function Conversation({ chat, worklog, roleLabels, running, chatI
     endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [lines.length]);
 
+  // The question is settled once its answer is on the worklog. (An earlier version
+  // looked for a 'running' event, which the orchestrator only ever emits over SSE and
+  // never writes to disk — so the prompt could never clear.)
   const pendingClarify = [...worklog].reverse().find((e) => e.event === 'awaiting_human');
-  const answered = worklog.some((e) => e.event === 'running' && pendingClarify && e.ts > pendingClarify.ts);
+  const answered =
+    !!pendingClarify &&
+    worklog.some((e) => e.event === 'clarification_answered' && e.detail?.itemId === pendingClarify.detail?.itemId);
   const gaps = Object.entries(chat?.artifacts ?? {}).flatMap(([role, a]) => (a.gaps ?? []).map((g) => ({ role, g })));
 
   return (

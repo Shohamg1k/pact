@@ -11,7 +11,7 @@ function isSatisfied(role, graph, available) {
   return requires.some((group) => group.every((r) => available.has(r)));
 }
 
-export default function AgentPanel({ roles, existing, running, failed, selected, onToggle, onGenerate, busy, error, roleLabels, disabled }) {
+export default function AgentPanel({ roles, existing, running, failed, selected, onToggle, onGenerate, busy, error, roleLabels, disabled, interactive, onInteractive }) {
   const graph = Object.fromEntries(roles.map((r) => [r.id, r]));
   const available = new Set(existing);
   const satisfied = {};
@@ -60,6 +60,12 @@ export default function AgentPanel({ roles, existing, running, failed, selected,
             </div>
             <div className="run-actions">
               {error && <div className="notice bad" style={{ marginBottom: 6 }}>{error}</div>}
+              {/* CORE-6: below 0.7 completeness the Architect either asks ONE question
+                  (interactive) or proceeds with every assumption flagged (batch). */}
+              <label className="checkbox-row" title="If the brief is underspecified, pause and ask one clarifying question instead of assuming.">
+                <input type="checkbox" checked={!!interactive} onChange={(e) => onInteractive?.(e.target.checked)} />
+                Ask me if the brief is underspecified
+              </label>
               <button className="btn primary" disabled={busy || selected.size === 0} onClick={onGenerate}>
                 {busy ? 'Running…' : selected.size ? `Generate ${selected.size} agent${selected.size > 1 ? 's' : ''}` : 'Generate'}
               </button>

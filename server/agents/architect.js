@@ -61,7 +61,7 @@ export async function runArchitect(chatId, brief, opts = {}) {
       const question = deriveClarifyingQuestion(revalidated.contract, brief);
       const ask = await askClarification(chatId, question, { jobId: loopResult.jobId });
       if (ask.asked) {
-        await appendChatLog(chatId, 'worklog.jsonl', { ts: Date.now(), phase: 'architect', event: 'awaiting_human', detail: { itemId: ask.item.id } });
+        await appendChatLog(chatId, 'worklog.jsonl', { ts: Date.now(), phase: 'architect', event: 'awaiting_human', detail: { itemId: ask.item.id, question } });
         return { status: 'awaiting_human', item: ask.item, contract: revalidated.contract };
       }
       // round cap already hit — fall through to accept with flagged assumptions
