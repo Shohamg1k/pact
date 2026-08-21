@@ -7,11 +7,39 @@
 // appending the permission flag first would hand -p the flag string as "the prompt"
 // and silently discard the real one. Not hypothetical: this is the exact bug fixed
 // in registry.js's AGY_CFG.
-import { spawn } from 'node:child_process';
+import { spawn, exec } from 'node:child_process';
+import { promisify } from 'node:util';
 import fs from 'node:fs';
+
+const execAsync = promisify(exec);
 
 const DEFAULT_CLI_TIMEOUT_MS = 900_000; // 15 min — code-heavy roles (frontend, whole-repo backends)
 // can genuinely take longer than 10 on a single CLI rung with no failover available.
+
+/** Kills the whole process TREE, not just the tracked pid. Needed because every CLI
+ * adapter spawns with shell:true (registry.js's CLAUDE_CFG sets no `shell` at all, so
+ * spawnCliAgent's `cfg.shell ?? true` default applies) — on Windows that makes the
+ * tracked p.pid a `cmd.exe` wrapper, with the real CLI (claude.exe/agy.exe) running as
+ * its GRANDCHILD. p.kill() only signals the wrapper; TerminateProcess doesn't cascade
+ * to children on Windows, so a plain p.kill() on timeout orphans the real CLI process —
+ * left running, untracked, with its stdio pipes abruptly closed. Same bug class runner.js
+ * already fixed for the generated app's own processes (see runner.js's killTree). */
+async function killTree(pid) {
+  if (!pid) return;
+  if (process.platform === 'win32') {
+    try {
+      await execAsync(`taskkill /pid ${pid} /T /F`);
+    } catch {
+      /* already exited — fine */
+    }
+  } else {
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch {
+      /* already exited — fine */
+    }
+  }
+}
 
 /**
  * @param {import('./registry.js').CliAgentConfig} cfg
@@ -32,7 +60,7 @@ export function spawnCliAgent(cfg, prompt, cwd) {
     let out = '';
     let err = '';
     const t = setTimeout(() => {
-      p.kill();
+      killTree(p.pid);
       reject(new Error(`${cfg.bin} run timed out (${Math.round((cfg.timeoutMs ?? DEFAULT_CLI_TIMEOUT_MS) / 60_000)} min)`));
     }, cfg.timeoutMs ?? DEFAULT_CLI_TIMEOUT_MS);
 
@@ -71,7 +99,7 @@ export function probeCliAgent(bin, versionArgs = ['--version']) {
   return new Promise((resolve) => {
     const p = spawn(bin, versionArgs, { shell: true, stdio: 'ignore' });
     const t = setTimeout(() => {
-      p.kill();
+      killTree(p.pid);
       resolve(false);
     }, 8000);
     p.on('error', () => {
