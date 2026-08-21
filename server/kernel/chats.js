@@ -6,6 +6,7 @@
 // named grouping of chats (a folder, in the user-facing sense).
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
+import { rm } from 'node:fs/promises';
 import {
   PACT_ROOT,
   writeFileAt,
@@ -127,4 +128,32 @@ export async function listProjects() {
     if (p) out.push(p);
   }
   return out;
+}
+
+/**
+ * Delete a chat and everything under it. Files are truth (P3), so removing the directory
+ * IS the deletion — there is no index to keep in step. The caller must stop any running
+ * preview first; this module owns files, not processes.
+ */
+export async function deleteChat(chatId) {
+  await rm(chatDir(chatId), { recursive: true, force: true });
+}
+
+/**
+ * Delete a project. Its chats are UNFILED rather than destroyed — losing a week of
+ * generated work because a folder was tidied up would be indefensible, and the user can
+ * still delete each chat deliberately.
+ * @returns {Promise<{unfiled: number}>}
+ */
+export async function deleteProject(projectId) {
+  let unfiled = 0;
+  for (const id of await listChats()) {
+    const chat = await getChat(id);
+    if (chat?.projectId === projectId) {
+      await patchChat(id, { projectId: null });
+      unfiled++;
+    }
+  }
+  await rm(projectDir(projectId), { recursive: true, force: true });
+  return { unfiled };
 }

@@ -4,7 +4,7 @@
 import express from 'express';
 import cors from 'cors';
 import path from 'node:path';
-import { generateRoles, subscribe, resumeAfterAnswer, SelectionError, getPreview, startPreviewForChat } from './orchestrator.js';
+import { generateRoles, subscribe, resumeAfterAnswer, SelectionError, getPreview, startPreviewForChat, stopPreview } from './orchestrator.js';
 import {
   getChat,
   listChats,
@@ -16,6 +16,8 @@ import {
   listProjects,
   availableRoles,
   chatDir,
+  deleteChat,
+  deleteProject,
 } from './kernel/chats.js';
 import { gate } from './gate.js';
 import { adapters, probeAll } from './adapters/index.js';
@@ -45,6 +47,22 @@ app.post('/api/projects', async (req, res) => {
   res.json(await createProject(name));
 });
 app.get('/api/projects', async (_req, res) => res.json({ projects: await listProjects() }));
+
+// Deleting a project unfiles its chats rather than destroying them (kernel/chats.js).
+app.delete('/api/projects/:id', async (req, res) => {
+  const result = await deleteProject(req.params.id);
+  res.json({ ok: true, ...result });
+});
+
+// Deleting a chat takes its generated tree with it, so any preview it booted has to be
+// torn down first or we'd leak a node process and its mongod.
+app.delete('/api/chats/:id', async (req, res) => {
+  const chat = await getChat(req.params.id);
+  if (!chat) return res.status(404).json({ code: 'NOT_FOUND' });
+  await stopPreview(req.params.id);
+  await deleteChat(req.params.id);
+  res.json({ ok: true });
+});
 
 // --- chats ---
 // CORE-1: a chat is created by its first message — that message IS the brief, stored

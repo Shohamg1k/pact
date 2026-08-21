@@ -51,6 +51,13 @@ export const IconRefresh = (p) => (
   <S {...p}><path d="M20 11a8 8 0 1 0-.6 4" /><path d="M20 4.5V11h-6" /></S>
 );
 
+export const IconPanelLeft = (p) => (
+  <S {...p}><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9.5 4v16" /></S>
+);
+export const IconPanelRight = (p) => (
+  <S {...p}><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M14.5 4v16" /></S>
+);
+
 /** One icon per artifact role — used in tabs, the explorer tree, and the agent list. */
 export const ROLE_ICON = {
   pm: IconBook,

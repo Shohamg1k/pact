@@ -34,6 +34,15 @@ export async function createProject(name) {
   });
   return res.json();
 }
+export async function deleteProject(projectId) {
+  const res = await fetch(`${BASE}/projects/${projectId}`, { method: 'DELETE' });
+  return asJson(res);
+}
+export async function deleteChat(chatId) {
+  const res = await fetch(`${BASE}/chats/${chatId}`, { method: 'DELETE' });
+  return asJson(res);
+}
+
 export async function listProjects() {
   const res = await fetch(`${BASE}/projects`);
   return res.json();

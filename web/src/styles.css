@@ -331,6 +331,35 @@ body.resizing iframe { pointer-events: none; }  /* the preview must not swallow 
 .tabx .tx:hover { background: #423d3a; color: var(--text-bright); }
 
 .pane-body { flex: 1; overflow: auto; min-height: 0; }
+
+/* Always-visible pane toggles. The status-bar links alone were too easy to miss, so a
+   collapsed sidebar read as "projects are gone" rather than "the panel is hidden". */
+.pane-toggles {
+  display: flex; align-items: center; gap: 4px;
+  padding: 7px 10px; flex-shrink: 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+.toggle-btn {
+  width: 26px; height: 24px; border-radius: 6px;
+  display: grid; place-items: center; color: var(--text-faint);
+}
+.toggle-btn:hover { background: var(--hover); color: var(--text); }
+.toggle-btn.on { color: var(--accent); }
+
+/* Hover-revealed delete on tree rows. */
+.row-wrap { display: flex; align-items: stretch; }
+.row-wrap .chat-row { flex: 1; min-width: 0; }
+.row-del {
+  width: 22px; flex-shrink: 0; border-radius: 5px;
+  color: var(--text-faint); font-size: 15px; line-height: 1;
+  opacity: 0; transition: opacity 0.1s;
+}
+.row-wrap:hover .row-del, .proj-row:hover .row-del { opacity: 1; }
+.row-del:hover { background: rgba(217,105,95,0.16); color: var(--red); }
+.proj-row { position: relative; }
+
+.btn.danger { background: var(--red); color: #1e1412; font-weight: 600; }
+.btn.danger:hover:not(:disabled) { background: #e37b71; }
 .pad { padding: 18px 20px 36px; }
 
 /* ============================ conversation ============================ */

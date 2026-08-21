@@ -28,18 +28,25 @@ function StatusRing({ status }) {
   );
 }
 
-function ChatBlock({ chat, selected, jobs, running, roleLabels, onSelect, onOpenRole }) {
+function ChatBlock({ chat, selected, jobs, running, roleLabels, onSelect, onOpenRole, onDelete }) {
   const [open, setOpen] = useState(true);
   const mine = jobs.filter((j) => j.role);
   return (
     <div className={`chat-block ${selected ? 'selected' : ''}`}>
-      <button className="chat-row" onClick={() => onSelect(chat.id)}>
-        <span className={`chat-dot ${running ? 'running' : ''}`} />
-        <span className="chat-meta">
-          <div className="chat-title">{chat.title || '(untitled)'}</div>
-          <div className="chat-sub">{age(chat.updatedAt)} · {mine.length} agent{mine.length === 1 ? '' : 's'}</div>
-        </span>
-      </button>
+      <div className="row-wrap">
+        <button className="chat-row" onClick={() => onSelect(chat.id)}>
+          <span className={`chat-dot ${running ? 'running' : ''}`} />
+          <span className="chat-meta">
+            <div className="chat-title">{chat.title || '(untitled)'}</div>
+            <div className="chat-sub">{age(chat.updatedAt)} · {mine.length} agent{mine.length === 1 ? '' : 's'}</div>
+          </span>
+        </button>
+        <button
+          className="row-del"
+          title="Delete this chat"
+          onClick={(e) => { e.stopPropagation(); onDelete(chat); }}
+        >×</button>
+      </div>
 
       {selected && mine.length > 0 && (
         <>
@@ -68,6 +75,7 @@ function ChatBlock({ chat, selected, jobs, running, roleLabels, onSelect, onOpen
 export default function NavTree({
   chats, projects, jobsByChat, activeChatId, running, roleLabels,
   view, onView, onSelectChat, onNewChat, onNewProject, onOpenRole, inboxCount, panel,
+  onDeleteChat, onDeleteProject,
 }) {
   const byProject = new Map(projects.map((p) => [p.id, []]));
   const unfiled = [];
@@ -86,6 +94,7 @@ export default function NavTree({
       roleLabels={roleLabels}
       onSelect={onSelectChat}
       onOpenRole={onOpenRole}
+      onDelete={onDeleteChat}
     />
   );
 
@@ -129,8 +138,13 @@ export default function NavTree({
                   <path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h3L8 4.6h4.5A1.5 1.5 0 0 1 14 6.1v6.4A1.5 1.5 0 0 1 12.5 14h-9A1.5 1.5 0 0 1 2 12.5z" />
                 </svg>
               </span>
-              {p.name}
+              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name}</span>
               <span className="count">{byProject.get(p.id).length}</span>
+              <button
+                className="row-del"
+                title="Delete this project (its chats are kept)"
+                onClick={(e) => { e.stopPropagation(); onDeleteProject(p); }}
+              >×</button>
             </div>
             {byProject.get(p.id).map(block)}
           </div>

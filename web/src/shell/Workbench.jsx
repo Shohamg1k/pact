@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   listChats, listProjects, getChat, createChat, streamChat, getArtifact, getFile,
   generateRoles, getAgentGraph, getAdapters, startPreview, createProject, listInbox,
+  deleteChat as apiDeleteChat, deleteProject as apiDeleteProject,
 } from '../api.js';
 import { parseWorklog } from '../lib/worklog.js';
 import { getLinkedHandle, linkFolder, hasPermission, mirrorRole } from '../lib/fsMirror.js';
@@ -12,6 +13,7 @@ import SettingsView from './SettingsView.jsx';
 import SaveTargetModal from './SaveTargetModal.jsx';
 import FileRail from './FileRail.jsx';
 import Splitter from './Splitter.jsx';
+import { PromptDialog, ConfirmDialog } from './Dialog.jsx';
 import AdapterSettings from '../components/AdapterSettings.jsx';
 import Inbox from '../components/Inbox.jsx';
 import CodeViewer from '../components/CodeViewer.jsx';
@@ -27,7 +29,7 @@ import ApiConsole from '../tabs/ApiConsole.jsx';
 import ProvenanceTab from '../tabs/ProvenanceTab.jsx';
 import PackViewer from '../tabs/PackViewer.jsx';
 import FileTab from '../tabs/FileTab.jsx';
-import { ROLE_ICON, IconDiagram, IconServer, IconBrowser, IconTerminal, IconTrace, IconFile, IconCheck } from './icons.jsx';
+import { ROLE_ICON, IconDiagram, IconServer, IconBrowser, IconTerminal, IconTrace, IconFile, IconCheck, IconPanelLeft, IconPanelRight } from './icons.jsx';
 
 const TAB_ICON = {
   diagram: IconDiagram, 'backend-map': IconServer, preview: IconBrowser, api: IconTerminal,
@@ -83,6 +85,7 @@ export default function Workbench() {
     return Math.min(saved || Math.round(window.innerWidth * 0.34), max);
   });
   const [interactive, setInteractive] = useState(false);
+  const [dialog, setDialog] = useState(null); // {kind:'new-project'|'del-chat'|'del-project', target}
   const folderRef = useRef(null);
   const unsubRef = useRef(null);
 
@@ -279,6 +282,26 @@ export default function Workbench() {
     setStartingBackend(false);
   }, [activeChatId, loadChat]);
 
+  async function confirmDelete() {
+    const d = dialog;
+    setDialog(null);
+    if (d.kind === 'del-chat') {
+      await apiDeleteChat(d.target.id);
+      // Deleting the chat you're looking at must clear the whole view, not leave tabs
+      // and a file tree pointing at something that no longer exists.
+      if (d.target.id === activeChatId) {
+        setActiveChatId(null);
+        setChat(null);
+        setArtifacts({});
+        setTabs([]);
+        setActiveTabId(null);
+      }
+    } else if (d.kind === 'del-project') {
+      await apiDeleteProject(d.target.id);
+    }
+    await refreshLists();
+  }
+
   const activeTab = tabs.find((t) => t.id === activeTabId);
 
   function renderTab(tab) {
@@ -317,15 +340,20 @@ export default function Workbench() {
 
   const activeFilePath = activeTab?.kind === 'file' ? activeTab.entry.path : null;
 
-  const cols = [
-    showNav ? `${navW}px` : '0px',
-    showNav ? '5px' : '0px',
-    '1fr',
-    '5px',
-    `${outW}px`,
-    showRail ? '5px' : '0px',
-    showRail ? `${railW}px` : '0px',
-  ].join(' ');
+  // Nothing is open yet -> the output pane and file rail have nothing to say, so the
+  // centre takes the whole width instead of framing the composer with empty panes.
+  const focus = !activeChatId;
+  const cols = focus
+    ? [showNav ? `${navW}px` : '0px', showNav ? '5px' : '0px', '1fr', '0px', '0px', '0px', '0px'].join(' ')
+    : [
+        showNav ? `${navW}px` : '0px',
+        showNav ? '5px' : '0px',
+        '1fr',
+        '5px',
+        `${outW}px`,
+        showRail ? '5px' : '0px',
+        showRail ? `${railW}px` : '0px',
+      ].join(' ');
 
   return (
     <div className="shell" style={{ gridTemplateColumns: cols }}>
@@ -336,10 +364,9 @@ export default function Workbench() {
           view={view} onView={setView} inboxCount={inboxCount}
           onSelectChat={selectChat}
           onNewChat={() => { setActiveChatId(null); setChat(null); setTabs([]); setActiveTabId(null); }}
-          onNewProject={async () => {
-            const name = window.prompt('Project name');
-            if (name && name.trim()) { await createProject(name.trim()); await refreshLists(); }
-          }}
+          onNewProject={() => setDialog({ kind: 'new-project' })}
+          onDeleteChat={(c) => setDialog({ kind: 'del-chat', target: c })}
+          onDeleteProject={(p) => setDialog({ kind: 'del-project', target: p })}
           onOpenRole={openRole}
           panel={
             <SidePanel
@@ -362,6 +389,18 @@ export default function Workbench() {
       {showNav && <Splitter ariaLabel="Resize sidebar" onDrag={resizeNav} onDoubleClick={() => setNavW(288)} />}
 
       <div className="pane centre">
+        <div className="pane-toggles">
+          <button className={`toggle-btn ${showNav ? 'on' : ''}`} title="Sidebar (Ctrl+B)" onClick={() => setShowNav((v) => !v)}>
+            <IconPanelLeft size={15} />
+          </button>
+          {!focus && (
+            <button className={`toggle-btn ${showRail ? 'on' : ''}`} title="File tree (Ctrl+J)" onClick={() => setShowRail((v) => !v)}>
+              <IconPanelRight size={15} />
+            </button>
+          )}
+          <span style={{ flex: 1 }} />
+          {chat && <span className="hint">{chat.chat?.title?.slice(0, 46)}</span>}
+        </div>
         {!activeChatId ? (
           <Welcome onStart={setPendingBrief} />
         ) : (
@@ -375,9 +414,9 @@ export default function Workbench() {
         )}
       </div>
 
-      <Splitter ariaLabel="Resize outputs" onDrag={resizeOut} onDoubleClick={() => setOutW(560)} />
+      {!focus && <Splitter ariaLabel="Resize outputs" onDrag={resizeOut} onDoubleClick={() => setOutW(Math.round(window.innerWidth * 0.34))} />}
 
-      <div className="pane out">
+      <div className="pane out" style={{ display: focus ? 'none' : 'flex' }}>
         {tabs.length > 0 && (
           <div className="tabstrip">
             {tabs.map((t) => {
@@ -404,9 +443,9 @@ export default function Workbench() {
         </div>
       </div>
 
-      {showRail && <Splitter ariaLabel="Resize file rail" onDrag={resizeRail} onDoubleClick={() => setRailW(232)} />}
+      {showRail && !focus && <Splitter ariaLabel="Resize file rail" onDrag={resizeRail} onDoubleClick={() => setRailW(232)} />}
 
-      <div className="pane rail" style={{ display: showRail ? 'flex' : 'none' }}>
+      <div className="pane rail" style={{ display: showRail && !focus ? 'flex' : 'none' }}>
         <FileRail
           chatTitle={chat?.chat?.title}
           artifacts={artifacts}
@@ -442,6 +481,34 @@ export default function Workbench() {
 
       {showAdapters && <AdapterSettings onClose={() => setShowAdapters(false)} />}
       {pendingBrief && <SaveTargetModal projects={projects} onCancel={() => setPendingBrief(null)} onConfirm={confirmSaveTarget} />}
+
+      {dialog?.kind === 'new-project' && (
+        <PromptDialog
+          title="New project"
+          sub="A project groups related chats together. You can move a chat into it when you create the chat."
+          placeholder="e.g. Internal Tools"
+          onCancel={() => setDialog(null)}
+          onConfirm={async (name) => { setDialog(null); await createProject(name); await refreshLists(); }}
+        />
+      )}
+      {dialog?.kind === 'del-chat' && (
+        <ConfirmDialog
+          title="Delete this chat?"
+          body={`"${dialog.target.title || 'Untitled'}" and everything it generated — artifacts, packs, generated code — will be permanently deleted. This cannot be undone.`}
+          confirmLabel="Delete chat"
+          onCancel={() => setDialog(null)}
+          onConfirm={confirmDelete}
+        />
+      )}
+      {dialog?.kind === 'del-project' && (
+        <ConfirmDialog
+          title="Delete this project?"
+          body={`"${dialog.target.name}" will be removed. Its chats are KEPT and simply become unfiled — nothing you generated is lost.`}
+          confirmLabel="Delete project"
+          onCancel={() => setDialog(null)}
+          onConfirm={confirmDelete}
+        />
+      )}
     </div>
   );
 }
