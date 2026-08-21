@@ -685,6 +685,9 @@ table.grid tr:hover td, table.trace-table tr:hover td { background: var(--hover)
 /* ============================ diagram ============================ */
 
 .diagram-wrap { height: 100%; display: flex; flex-direction: column; min-height: 0; }
+.diagram-wrap.diagram-fullscreen {
+  position: fixed; inset: 0; z-index: 200; background: var(--deep); padding: 10px;
+}
 .diagram-toolbar {
   display: flex; align-items: center; gap: 8px;
   padding: 9px 12px; border-bottom: 1px solid var(--border-soft);

@@ -66,6 +66,9 @@ export default function Workbench() {
   const [inboxCount, setInboxCount] = useState(0);
   const [showRail, setShowRail] = useState(() => localStorage.getItem('pact.rail') !== '0');
   const [showNav, setShowNav] = useState(() => localStorage.getItem('pact.nav') !== '0');
+  // Collapsing the conversation pane hands its width to the output pane (the diagram/
+  // code/etc. you're actually looking at) instead of leaving it as dead space.
+  const [showCentre, setShowCentre] = useState(() => localStorage.getItem('pact.centre') !== '0');
   // Pane widths are user-owned and persisted; the centre column is the flexible one.
   const [navW, setNavW] = useState(() => Number(localStorage.getItem('pact.navW')) || 280);
   const [railW, setRailW] = useState(() => Number(localStorage.getItem('pact.railW')) || 232);
@@ -87,6 +90,7 @@ export default function Workbench() {
   useEffect(() => { localStorage.setItem('pact.railW', String(railW)); }, [railW]);
   useEffect(() => { localStorage.setItem('pact.rail', showRail ? '1' : '0'); }, [showRail]);
   useEffect(() => { localStorage.setItem('pact.nav', showNav ? '1' : '0'); }, [showNav]);
+  useEffect(() => { localStorage.setItem('pact.centre', showCentre ? '1' : '0'); }, [showCentre]);
 
   // Clamp so no drag — and no window resize — can starve the centre pane.
   const MIN_CENTRE = 300;
@@ -367,12 +371,16 @@ export default function Workbench() {
   // Nothing is open yet -> the output pane and file rail have nothing to say, so the
   // centre takes the whole width instead of framing the composer with empty panes.
   const focus = !activeChatId;
+  // The user can also collapse the conversation deliberately (there IS a chat, they
+  // just want the output — a diagram, code, the tester — to have the space instead).
+  // Meaningless in focus mode (nothing else to give the space to), so it's a no-op then.
+  const centreCollapsed = showCentre === false && !focus;
   // Widths are clamped at RENDER, not only on the resize event: a missed or coalesced
   // resize previously left nav+out+rail wider than the window and squeezed the centre
   // pane to 1px. Deriving them here makes the invariant hold unconditionally.
   const navPx = showNav ? Math.min(navW, Math.max(160, window.innerWidth - 360)) : 0;
   const railPx = showRail && !focus ? railW : 0;
-  const splitters = (showNav ? 5 : 0) + (focus ? 0 : 5) + (railPx ? 5 : 0);
+  const splitters = (showNav ? 5 : 0) + (focus || centreCollapsed ? 0 : 5) + (railPx ? 5 : 0);
   const outPx = focus
     ? 0
     : Math.max(240, Math.min(outW, window.innerWidth - navPx - railPx - splitters - MIN_CENTRE));
@@ -380,16 +388,22 @@ export default function Workbench() {
   const cols = [
     `${navPx}px`,
     showNav ? '5px' : '0px',
-    'minmax(0, 1fr)',
-    focus ? '0px' : '5px',
-    `${outPx}px`,
+    centreCollapsed ? '0px' : 'minmax(0, 1fr)',
+    focus || centreCollapsed ? '0px' : '5px',
+    centreCollapsed ? 'minmax(0, 1fr)' : `${outPx}px`,
     railPx ? '5px' : '0px',
     `${railPx}px`,
   ].join(' ');
 
   return (
     <div className="shell" style={{ gridTemplateColumns: cols }}>
-      <div className="pane nav" style={{ display: showNav ? 'flex' : 'none' }}>
+      {/* display:none is deliberately never used to hide a pane here: it removes the
+          element from CSS Grid participation entirely, which shifts every later column's
+          auto-placement by one and silently breaks a DIFFERENT pane's width (confirmed
+          live — this exact bug made the output pane render 0-wide). A 0px grid-column
+          track already renders nothing (overflow:hidden on .pane), so collapse is
+          expressed ONLY through the column width in `cols`, never through display. */}
+      <div className="pane nav" style={{ visibility: showNav ? 'visible' : 'hidden' }}>
         <NavTree
           chats={chats} projects={projects} jobsByChat={jobsByChat}
           activeChatId={activeChatId} running={running} roleLabels={roleLabels}
@@ -419,13 +433,23 @@ export default function Workbench() {
         </div>
       </div>
 
-      {showNav && <Splitter ariaLabel="Resize sidebar" onDrag={resizeNav} onDoubleClick={() => setNavW(288)} />}
+      {/* Always rendered — a hidden splitter still needs to occupy a grid column, or
+          CSS Grid auto-placement shifts every column after it by one and every pane
+          after it renders at width 0 in the WRONG track (confirmed live: this exact
+          bug made the output pane render 0-wide when the conversation pane collapsed).
+          A collapsed splitter's own grid track is 0px, so it's naturally invisible. */}
+      <Splitter ariaLabel="Resize sidebar" onDrag={resizeNav} onDoubleClick={() => setNavW(288)} />
 
-      <div className="pane centre">
+      <div className="pane centre" style={{ visibility: centreCollapsed ? 'hidden' : 'visible' }}>
         <div className="pane-toggles">
           <button className={`toggle-btn ${showNav ? 'on' : ''}`} title="Sidebar (Ctrl+B)" onClick={() => setShowNav((v) => !v)}>
             <IconPanelLeft size={15} />
           </button>
+          {!focus && (
+            <button className="toggle-btn" title="Collapse conversation — give this space to the output pane" onClick={() => setShowCentre(false)}>
+              <IconPanelRight size={15} />
+            </button>
+          )}
           {!focus && (
             <button className={`toggle-btn ${showRail ? 'on' : ''}`} title="File tree (Ctrl+J)" onClick={() => setShowRail((v) => !v)}>
               <IconPanelRight size={15} />
@@ -456,11 +480,16 @@ export default function Workbench() {
         )}
       </div>
 
-      {!focus && <Splitter ariaLabel="Resize outputs" onDrag={resizeOut} onDoubleClick={() => setOutW(Math.round(window.innerWidth * 0.34))} />}
+      <Splitter ariaLabel="Resize outputs" onDrag={resizeOut} onDoubleClick={() => setOutW(Math.round(window.innerWidth * 0.34))} />
 
-      <div className="pane out" style={{ display: focus ? 'none' : 'flex' }}>
+      <div className="pane out" style={{ visibility: focus ? 'hidden' : 'visible' }}>
         {tabs.length > 0 && (
           <div className="tabstrip" ref={tabstripRef}>
+            {centreCollapsed && (
+              <button className="toggle-btn" title="Show conversation" onClick={() => setShowCentre(true)} style={{ flexShrink: 0 }}>
+                <IconPanelLeft size={14} />
+              </button>
+            )}
             {tabs.map((t) => {
               const Icon = TAB_ICON[t.kind] ?? ROLE_ICON[t.role] ?? IconFile;
               return (
@@ -485,9 +514,9 @@ export default function Workbench() {
         </div>
       </div>
 
-      {showRail && !focus && <Splitter ariaLabel="Resize file rail" onDrag={resizeRail} onDoubleClick={() => setRailW(232)} />}
+      <Splitter ariaLabel="Resize file rail" onDrag={resizeRail} onDoubleClick={() => setRailW(232)} />
 
-      <div className="pane rail" style={{ display: showRail && !focus ? 'flex' : 'none' }}>
+      <div className="pane rail" style={{ visibility: showRail && !focus ? 'visible' : 'hidden' }}>
         <FileRail
           chatTitle={chat?.chat?.title}
           artifacts={artifacts}
@@ -519,6 +548,11 @@ export default function Workbench() {
         <span className="status-item clickable" title="Toggle the file rail (Ctrl+J)" onClick={() => setShowRail((v) => !v)}>
           {showRail ? '◨ files' : '▫ files'}
         </span>
+        {!focus && (
+          <span className="status-item clickable" title="Toggle the conversation pane" onClick={() => setShowCentre((v) => !v)}>
+            {centreCollapsed ? '▫ chat' : '◨ chat'}
+          </span>
+        )}
       </div>
 
       {showAdapters && <AdapterSettings onClose={() => setShowAdapters(false)} />}

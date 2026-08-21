@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import DiagramIcon, { resolveIcon, ICON_COLOR } from './diagramIcons.jsx';
 import { layoutDiagram, deriveDiagram, EDGE_STYLE, TILE_W, TILE_H } from './diagramLayout.js';
+import { useFullscreenPane } from '../lib/useFullscreenPane.js';
 
 // The system diagram: nested zones, tiles with technology glyphs, typed and labelled
 // connections, a legend — and it's interactive. Selecting a tile dims everything it
@@ -16,6 +17,7 @@ export default function ArchitectureDiagram({ contract }) {
   const [selected, setSelected] = useState(null);
   const [zoom, setZoom] = useState(1);
   const [fit, setFit] = useState(true); // a wide diagram in a narrow pane is unreadable
+  const [fullscreen, setFullscreen] = useFullscreenPane();
   const canvasRef = useRef(null);
 
   // The Architect draws the system when it can; otherwise derive a real picture from the
@@ -53,7 +55,7 @@ export default function ArchitectureDiagram({ contract }) {
   const usedKinds = [...new Set(laid.edges.map((e) => e.kind ?? 'request'))];
 
   return (
-    <div className="diagram-wrap">
+    <div className={`diagram-wrap ${fullscreen ? 'diagram-fullscreen' : ''}`}>
       <FitWatcher canvasRef={canvasRef} width={laid.width} fit={fit} setZoom={setZoom} detailOpen={!!sel} />
       <div className="diagram-toolbar">
         <span className="badge mono">{laid.nodes.length} components</span>
@@ -71,6 +73,9 @@ export default function ArchitectureDiagram({ contract }) {
         <button className="btn small ghost" onClick={() => { setFit(false); setZoom((z) => Math.max(0.3, +(z - 0.1).toFixed(2))); }}>−</button>
         <span className="hint" style={{ minWidth: 38, textAlign: 'center' }}>{Math.round(zoom * 100)}%</span>
         <button className="btn small ghost" onClick={() => { setFit(false); setZoom((z) => Math.min(2, +(z + 0.1).toFixed(2))); }}>+</button>
+        <button className="btn small ghost" title={fullscreen ? 'Exit full screen (Esc)' : 'Full screen'} onClick={() => setFullscreen((f) => !f)}>
+          {fullscreen ? 'Exit full screen' : 'Full screen'}
+        </button>
       </div>
 
       <div className="diagram-body">

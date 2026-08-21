@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { useFullscreenPane } from '../lib/useFullscreenPane.js';
 
 // Visual database schema — one table card per collection, with field name/type/flags
 // parsed from the contract's free-text field descriptions, and reference lines drawn
@@ -74,6 +75,7 @@ function layout(collections) {
 
 export default function SchemaDiagram({ contract }) {
   const [selected, setSelected] = useState(null);
+  const [fullscreen, setFullscreen] = useFullscreenPane();
   const collections = contract?.collections ?? [];
 
   const { boxes, width, height, refs } = useMemo(() => {
@@ -88,12 +90,15 @@ export default function SchemaDiagram({ contract }) {
   const related = selected ? new Set(refs.filter((r) => r.from === selected || r.to === selected).flatMap((r) => [r.from, r.to])) : null;
 
   return (
-    <div className="diagram-wrap">
+    <div className={`diagram-wrap ${fullscreen ? 'diagram-fullscreen' : ''}`}>
       <div className="diagram-toolbar">
         <span className="badge mono">{collections.length} collections</span>
         <span className="badge mono">{refs.length} references</span>
         <span style={{ flex: 1 }} />
         {selected && <button className="btn small ghost" onClick={() => setSelected(null)}>Clear selection</button>}
+        <button className="btn small ghost" title={fullscreen ? 'Exit full screen (Esc)' : 'Full screen'} onClick={() => setFullscreen((f) => !f)}>
+          {fullscreen ? 'Exit full screen' : 'Full screen'}
+        </button>
       </div>
       <div className="diagram-body">
         <div className="diagram-canvas">
