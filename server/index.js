@@ -19,11 +19,13 @@ app.use(gate);
 app.get('/api/health', (_req, res) => res.json({ ok: true, ts: Date.now() }));
 
 app.post('/api/runs', async (req, res) => {
-  const { brief, projectName } = req.body ?? {};
+  const { brief, projectName, mode } = req.body ?? {};
   if (!brief || typeof brief !== 'string' || brief.length > 4000) {
     return res.status(400).json({ code: 'INVALID_BRIEF', detail: 'brief must be a string, 1-4000 chars' });
   }
-  const runId = await startRun(brief, projectName ?? null);
+  // CORE-6: 'interactive' (ask ONE question below 0.7 completeness) or 'batch' (default —
+  // proceed with every low-confidence assumption flagged, never blocks).
+  const runId = await startRun(brief, projectName ?? null, { mode: mode === 'interactive' ? 'interactive' : 'batch' });
   res.json({ runId });
 });
 
@@ -51,8 +53,11 @@ app.get('/api/runs/:id/stream', (req, res) => {
   req.on('close', unsubscribe);
 });
 
-app.get('/api/runs/:id/artifact/:name', async (req, res) => {
-  const body = await readArtifact(req.params.id, req.params.name);
+// Named wildcard (Express 5 / path-to-regexp v8 syntax) — artifact names can be nested
+// (packs/agent1.txt, raw/agent1-attempt-0.txt). req.params.name is an array of segments.
+app.get('/api/runs/:id/artifact/*name', async (req, res) => {
+  const name = [].concat(req.params.name).join('/');
+  const body = await readArtifact(req.params.id, name);
   if (body === null) return res.status(404).json({ code: 'NOT_FOUND' });
   res.type('text/plain').send(body);
 });
