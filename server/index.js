@@ -2,9 +2,12 @@
 // extend it, don't restructure it, without updating web/src/api.js in the same change.
 import express from 'express';
 import cors from 'cors';
-import { startRun, subscribe } from './orchestrator.js';
+import { startRun, subscribe, resumeAfterAnswer } from './orchestrator.js';
 import { getRun, readArtifact, listRuns } from './kernel/store.js';
 import { gate } from './gate.js';
+import { adapters, probeAll } from './adapters/index.js';
+import { launchCommandFor } from './adapters/registry.js';
+import { usageSnapshot } from './router.js';
 
 const app = express();
 app.use(cors());
@@ -59,10 +62,36 @@ app.get('/api/runs/:id/trace', async (req, res) => {
   res.json(trace ? JSON.parse(trace) : { rows: [], reverse: {} });
 });
 
-// Stub until server/router.js (feat/core-pipeline) lands.
-app.get('/api/adapters', (_req, res) => {
-  res.json({ adapters: [{ id: 'stub', name: 'stub', available: true, tier: 0 }] });
+// LOCKED (§11): answering the ONE clarifying question resumes the run.
+app.post('/api/runs/:id/answer', async (req, res) => {
+  const { itemId, answer } = req.body ?? {};
+  if (!itemId || !answer) return res.status(400).json({ code: 'INVALID_ANSWER' });
+  await resumeAfterAnswer(req.params.id, itemId, answer);
+  res.json({ ok: true });
 });
 
+app.get('/api/adapters', (_req, res) => {
+  res.json({
+    adapters: adapters.map((a) => ({
+      id: a.id,
+      name: a.name,
+      kind: a.kind,
+      tier: a.tier,
+      available: a.available,
+      detail: a.detail,
+      cooldownUntil: a.cooldownUntil ?? null,
+      launchCommand: launchCommandFor(a.id) ?? null,
+    })),
+  });
+});
+
+app.get('/api/usage', (_req, res) => res.json({ providers: usageSnapshot() }));
+
 const PORT = process.env.PACT_PORT || 4300;
+probeAll()
+  .then(() => {
+    console.log('[pact] adapters:', adapters.map((a) => `${a.id}=${a.available}`).join(' '));
+    setInterval(probeAll, 30_000); // ROUTE-6: re-probe every 30s, no restart needed
+  })
+  .catch(() => {});
 app.listen(PORT, () => console.log(`[pact] daemon listening on http://127.0.0.1:${PORT}`));

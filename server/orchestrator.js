@@ -4,6 +4,9 @@
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { ensureRunDir, writeArtifact, appendLog, patchRun } from './kernel/store.js';
+import { runArchitect } from './agents/architect.js';
+import { answerClarification } from './kernel/interrupts.js';
+import { getRun } from './kernel/store.js';
 
 export const bus = new EventEmitter();
 bus.setMaxListeners(100);
@@ -15,11 +18,11 @@ function emit(runId, phase, status, detail = {}) {
 const PHASES = ['agent1', 'gateV1', 'agent2', 'gateV2', 'run', 'connectors'];
 
 /**
- * STUB PIPELINE — real Agent 1 / Gate V1 / Agent 2 / Gate V2 land on feat/core-pipeline.
- * The phase names, SSE shape, and run.json fields below are the contract other tracks
- * build against; only the internals of each phase change as the real pipeline lands.
+ * Agent 1 + Gate V1 are real (agents/architect.js). Agent 2 + Gate V2 + run + connectors
+ * remain a stub until feat/core-pipeline finishes them — the phase names, SSE shape, and
+ * run.json fields are the contract other tracks build against; only phase internals change.
  */
-export async function startRun(brief, projectName = null) {
+export async function startRun(brief, projectName = null, opts = {}) {
   const runId = randomUUID().slice(0, 8);
   await ensureRunDir(runId);
   await writeArtifact(runId, 'requirement.md', brief);
@@ -32,7 +35,7 @@ export async function startRun(brief, projectName = null) {
     phases: PHASES.map((name) => ({ name, status: 'pending' })),
   });
 
-  runStub(runId).catch((e) => {
+  runPipeline(runId, brief, opts).catch((e) => {
     appendLog(runId, 'worklog.jsonl', { ts: Date.now(), phase: 'orchestrator', event: 'error', detail: e.message });
     patchRun(runId, { status: 'failed' });
     emit(runId, 'run', 'failed', { error: e.message });
@@ -51,15 +54,19 @@ async function setPhase(runId, phase, status, detail) {
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function runStub(runId) {
-  await setPhase(runId, 'agent1', 'running', { adapter: 'stub' });
-  await wait(600);
-  await setPhase(runId, 'agent1', 'passed', {});
+async function runPipeline(runId, brief, opts) {
+  await setPhase(runId, 'agent1', 'running', {});
+  const result = await runArchitect(runId, brief, { mode: opts.mode ?? 'batch' });
 
-  await setPhase(runId, 'gateV1', 'running', {});
-  await wait(300);
-  await setPhase(runId, 'gateV1', 'passed', {});
+  if (result.status === 'awaiting_human') {
+    await setPhase(runId, 'agent1', 'awaiting_human', { itemId: result.item.id, question: result.item.payload.question });
+    return; // resumes via POST /api/runs/:id/answer -> resumeAfterAnswer()
+  }
 
+  await setPhase(runId, 'agent1', 'passed', { gaps: result.gaps });
+  await setPhase(runId, 'gateV1', 'passed', { contractHash: result.hash });
+
+  // --- everything below is still a stub: Agent 2 + Gate V2 land next on feat/core-pipeline ---
   await setPhase(runId, 'agent2', 'running', { adapter: 'stub' });
   await wait(600);
   await setPhase(runId, 'agent2', 'passed', {});
@@ -74,6 +81,17 @@ async function runStub(runId) {
 
   await setPhase(runId, 'connectors', 'passed', {});
   await patchRun(runId, { status: 'done_stub' });
+}
+
+/** POST /api/runs/:id/answer -> here. Records the answer, then re-enters the pipeline. */
+export async function resumeAfterAnswer(runId, itemId, answer, opts = {}) {
+  await answerClarification(runId, itemId, answer);
+  const run = await getRun(runId);
+  runPipeline(runId, run.brief, opts).catch((e) => {
+    appendLog(runId, 'worklog.jsonl', { ts: Date.now(), phase: 'orchestrator', event: 'error', detail: e.message });
+    patchRun(runId, { status: 'failed' });
+    emit(runId, 'run', 'failed', { error: e.message });
+  });
 }
 
 export function subscribe(runId, listener) {

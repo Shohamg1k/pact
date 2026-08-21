@@ -84,3 +84,27 @@ export function repairFeedback(errors) {
 export function onlyUnderspecified(errors) {
   return errors.length > 0 && errors.every((e) => e.code === 'UNDERSPECIFIED');
 }
+
+/**
+ * P4 (graceful partial output): when repairs are exhausted and the only remaining
+ * errors are FEATURE_UNCOVERED / ORPHAN_ELEMENT, drop exactly those elements and
+ * re-validate the reduced contract rather than failing the whole run. Never used for
+ * SCHEMA_INVALID — a malformed document has no safe "valid subset" to extract.
+ * @returns {{contract:object, gaps:string[]}|null} null if pruning isn't applicable
+ */
+export function pruneInvalidElements(contract, errors) {
+  if (errors.some((e) => e.code === 'SCHEMA_INVALID')) return null;
+  const droppableCodes = new Set(['FEATURE_UNCOVERED', 'ORPHAN_ELEMENT']);
+  if (!errors.every((e) => droppableCodes.has(e.code))) return null;
+
+  const uncoveredFeatureIds = new Set(errors.filter((e) => e.code === 'FEATURE_UNCOVERED').map((e) => e.subject_id));
+  const orphanApiIds = new Set(errors.filter((e) => e.code === 'ORPHAN_ELEMENT').map((e) => e.subject_id));
+
+  const gaps = errors.map((e) => `${e.code}: ${e.detail} (dropped, BLOCKED_ON_UPSTREAM)`);
+  const pruned = {
+    ...contract,
+    features: contract.features.filter((f) => !uncoveredFeatureIds.has(f.id)),
+    apis: contract.apis.filter((a) => !orphanApiIds.has(a.id)),
+  };
+  return { contract: pruned, gaps };
+}
