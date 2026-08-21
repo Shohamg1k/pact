@@ -25,6 +25,7 @@ import { spawn, exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import net from 'node:net';
 import path from 'node:path';
+import { resolveStack } from './stacks.js';
 import { sha256 } from './kernel/store.js';
 
 const execAsync = promisify(exec);
@@ -121,7 +122,7 @@ export function pickProbeEndpoint(contract) {
  * @param {string} generatedDir - absolute path, caller-owned (see file header)
  * @param {object} manifest - a validated backend/v1 manifest (schemas/backend.js)
  */
-export async function writeGeneratedTree(generatedDir, manifest) {
+export async function writeGeneratedTree(generatedDir, manifest, stack = resolveStack(null)) {
   await mkdir(generatedDir, { recursive: true });
   const existing = await readdir(generatedDir).catch(() => []);
   for (const entry of existing) {
@@ -134,23 +135,32 @@ export async function writeGeneratedTree(generatedDir, manifest) {
     const filePath = path.join(generatedDir, m.path);
     await mkdir(path.dirname(filePath), { recursive: true });
     let code = m.code;
-    if (m.path === manifest.server_entry) {
-      code = injectHealthRoute(code);
-      code = injectPortEnv(code);
+    if (stack.id === 'node') {
+      if (m.path === manifest.server_entry) {
+        code = injectHealthRoute(code);
+        code = injectPortEnv(code);
+      }
+      code = injectMongoUri(code);
     }
-    code = injectMongoUri(code);
     await writeFile(filePath, code, 'utf8');
   }
 
-  const pkg = {
-    name: manifest.package_json?.name || 'pact-generated-backend',
-    version: '0.0.0',
-    private: true,
-    ...(format === 'module' ? { type: 'module' } : {}),
-    main: manifest.server_entry,
-    dependencies: { ...(manifest.package_json?.dependencies ?? {}) },
-  };
-  await writeFile(path.join(generatedDir, 'package.json'), JSON.stringify(pkg, null, 2), 'utf8');
+  const declared = { ...(stack.deps ?? {}), ...(manifest.package_json?.dependencies ?? {}) };
+  if (stack.manifestFile === 'requirements.txt') {
+    // pip wants `name==version` (or a bare name); the model may give '' for "any".
+    const lines = Object.entries(declared).map(([n, v]) => (v && /^[0-9]/.test(String(v)) ? `${n}==${v}` : n));
+    await writeFile(path.join(generatedDir, 'requirements.txt'), lines.join('\n') + '\n', 'utf8');
+  } else if (stack.manifestFile === 'package.json') {
+    const pkg = {
+      name: manifest.package_json?.name || 'pact-generated-backend',
+      version: '0.0.0',
+      private: true,
+      ...(format === 'module' ? { type: 'module' } : {}),
+      main: manifest.server_entry,
+      dependencies: declared,
+    };
+    await writeFile(path.join(generatedDir, 'package.json'), JSON.stringify(pkg, null, 2), 'utf8');
+  }
 
   return { entryPath: path.join(generatedDir, manifest.server_entry), format };
 }
@@ -196,17 +206,26 @@ function getFreePort() {
  */
 export async function installDeps(generatedDir, opts = {}) {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_INSTALL_TIMEOUT_MS;
-  const pkgPath = path.join(generatedDir, 'package.json');
-  const pkgRaw = await readFile(pkgPath, 'utf8');
+  const stack = opts.stack ?? resolveStack(null);
+  // Java here has no build tool available, so it declares no install step — that's a
+  // valid profile, not an error.
+  if (!stack.install) return { skipped: true, stdout: '', stderr: '' };
+
+  const pkgPath = path.join(generatedDir, stack.manifestFile);
+  const pkgRaw = await readFile(pkgPath, 'utf8').catch(() => '');
+  if (!pkgRaw.trim()) return { skipped: true, stdout: '', stderr: '' };
   const depsHash = sha256(pkgRaw);
   const markerPath = path.join(generatedDir, '.pact-deps-hash');
   const prevHash = await readFile(markerPath, 'utf8').catch(() => null);
-  if (prevHash === depsHash && existsSync(path.join(generatedDir, 'node_modules'))) {
+  // node_modules is Node's marker; other stacks install into the interpreter, so the
+  // hash alone decides whether a reinstall is needed.
+  const alreadyInstalled = stack.id === 'node' ? existsSync(path.join(generatedDir, 'node_modules')) : true;
+  if (prevHash === depsHash && alreadyInstalled) {
     return { skipped: true, stdout: '', stderr: '' };
   }
 
   const result = await new Promise((resolve, reject) => {
-    const p = spawn('npm', ['install', '--no-audit', '--no-fund', '--loglevel=error'], {
+    const p = spawn(stack.install.cmd, stack.install.args, {
       cwd: generatedDir,
       shell: true, // npm is a .cmd shim on Windows — same convention as adapters/spawn.js
     });
@@ -251,12 +270,17 @@ export async function startMemoryMongo(opts = {}) {
 /** Spawns the generated server as a child process. Returns a handle with rolling
  * stdout/stderr buffers (capped, so a crash-looping server can't leak memory) and exit
  * tracking so callers can fail fast instead of waiting out the full health-check timeout. */
-function startServerProcess(generatedDir, manifest, env) {
-  const entryPath = path.join(generatedDir, manifest.server_entry);
-  const child = spawn(process.execPath, [entryPath], {
+function startServerProcess(generatedDir, manifest, env, stack, port) {
+  const entry = manifest.server_entry || stack.entryDefault;
+  const spec = stack.start(entry, { port });
+  // Node resolves to the real node.exe so child.pid IS the process to kill; other
+  // launchers (py, java) are PATH shims on Windows and need a shell, which is exactly
+  // why killTree walks the process tree rather than killing one pid.
+  const isNode = spec.cmd === 'node';
+  const child = spawn(isNode ? process.execPath : spec.cmd, isNode ? [path.join(generatedDir, entry)] : spec.args, {
     cwd: generatedDir,
     env: { ...process.env, ...env },
-    shell: false, // real node.exe — no shell wrapper, so child.pid IS the process to kill
+    shell: !isNode,
   });
   const MAX_BUF = 20_000;
   let stdout = '';
@@ -336,30 +360,37 @@ function bootError(summary, err, manifest, stderr = '') {
  * @param {object} manifest - the validated backend manifest
  */
 export async function runBootCheck(generatedDir, contract, manifest, opts = {}) {
-  await writeGeneratedTree(generatedDir, manifest);
+  const stack = resolveStack(contract);
+  await writeGeneratedTree(generatedDir, manifest, stack);
+
+  // A stack we cannot start here isn't a failing gate — it's a check we honestly cannot
+  // run, so tier 3 is skipped and says why rather than reporting a false BOOT_FAIL.
+  if (stack.runnable === false) {
+    return { ok: true, skipped: true, reason: stack.runnableNote ?? `${stack.label} cannot be started on this machine`, stack: stack.id, issues: [] };
+  }
 
   try {
-    await installDeps(generatedDir, { timeoutMs: opts.installTimeoutMs });
+    await installDeps(generatedDir, { timeoutMs: opts.installTimeoutMs, stack });
   } catch (e) {
-    return bootError('npm install failed', e, manifest, e.stderr);
+    return bootError(`${stack.install?.cmd ?? 'dependency'} install failed`, e, manifest, e.stderr);
   }
 
   let mongo;
   try {
-    mongo = await startMemoryMongo(opts.mongo);
+    mongo = stack.db === 'mongo' ? await startMemoryMongo(opts.mongo) : { uri: '', stop: async () => {} };
   } catch (e) {
     return bootError('in-memory MongoDB failed to start', e, manifest);
   }
 
   const port = await getFreePort();
   const baseUrl = `http://127.0.0.1:${port}`;
-  const handle = startServerProcess(generatedDir, manifest, {
-    PORT: String(port),
-    PACT_RUNNER_PORT: String(port),
-    MONGO_URL: mongo.uri,
-    MONGO_URI: mongo.uri,
-    MONGODB_URI: mongo.uri,
-  });
+  const handle = startServerProcess(
+    generatedDir,
+    manifest,
+    { PACT_RUNNER_PORT: String(port), ...stack.env({ port, mongoUri: mongo.uri, dbPath: path.join(generatedDir, 'pact.db') }) },
+    stack,
+    port,
+  );
 
   try {
     await waitForHealth(baseUrl, handle, { timeoutMs: opts.bootTimeoutMs });
@@ -397,19 +428,24 @@ export async function runBootCheck(generatedDir, contract, manifest, opts = {}) 
  * shutdown) or the process/mongod will orphan.
  */
 export async function startPreviewServer(generatedDir, contract, manifest, opts = {}) {
-  await writeGeneratedTree(generatedDir, manifest);
-  await installDeps(generatedDir, { timeoutMs: opts.installTimeoutMs });
+  const stack = resolveStack(contract);
+  if (stack.runnable === false) {
+    throw Object.assign(new Error(stack.runnableNote ?? `${stack.label} cannot be started on this machine`), { code: 'STACK_NOT_RUNNABLE', stack: stack.id });
+  }
+  await writeGeneratedTree(generatedDir, manifest, stack);
+  await installDeps(generatedDir, { timeoutMs: opts.installTimeoutMs, stack });
 
-  const mongo = await startMemoryMongo(opts.mongo);
+  // Only Mongo-backed stacks pay for an in-memory mongod; SQLite stacks just get a path.
+  const mongo = stack.db === 'mongo' ? await startMemoryMongo(opts.mongo) : { uri: '', stop: async () => {} };
   const port = await getFreePort();
   const baseUrl = `http://127.0.0.1:${port}`;
-  const handle = startServerProcess(generatedDir, manifest, {
-    PORT: String(port),
-    PACT_RUNNER_PORT: String(port),
-    MONGO_URL: mongo.uri,
-    MONGO_URI: mongo.uri,
-    MONGODB_URI: mongo.uri,
-  });
+  const handle = startServerProcess(
+    generatedDir,
+    manifest,
+    { PACT_RUNNER_PORT: String(port), ...stack.env({ port, mongoUri: mongo.uri, dbPath: path.join(generatedDir, 'pact.db') }) },
+    stack,
+    port,
+  );
 
   try {
     await waitForHealth(baseUrl, handle, { timeoutMs: opts.bootTimeoutMs });

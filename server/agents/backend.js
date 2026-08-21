@@ -25,8 +25,24 @@ export async function runBackend(chatId, contract, opts = {}) {
   const architectureRaw = await readChatFile(chatId, 'artifacts/architect.json');
   const contractHash = 'sha256:' + crypto.createHash('sha256').update(architectureRaw).digest('hex');
 
+  // CORE-8: the stack is DATA. Everything downstream — the gate's route extraction, the
+  // syntax checker, the runner's install/start commands — keys off this same profile, so
+  // the prompt must state it explicitly rather than leaving the model to infer a stack.
+  const stack = resolveStack(contract);
+  const stackBlock = [
+    `## Target stack (authoritative — the gate and runner both use this profile)`,
+    ``,
+    `- Stack: **${stack.label}** (id \`${stack.id}\`)`,
+    `- Entry file: \`${stack.entryDefault}\``,
+    `- Dependency manifest: \`${stack.manifestFile}\``,
+    `- File languages allowed: ${stack.languages.map((l) => `\`${l}\``).join(', ')}`,
+    ``,
+    ...stack.promptRules.map((r) => `- ${r}`),
+  ].join('\n');
+
   const buildSections = (repairNote) => [
     { name: 'role', content: ROLE_PROMPT },
+    { name: 'stack', content: stackBlock },
     // The ONLY data content in this pack is the architect's artifact, verbatim — never
     // the brief (CORE-4). Provable by hash equality + grep (T3).
     { name: 'contract', content: architectureRaw },

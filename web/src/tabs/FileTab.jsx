@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { getFile } from '../api.js';
 import { markdownToHtml } from '../lib/markdown.js';
+import CodeEditor from '../components/CodeEditor.jsx';
 
 // One file from the generated project, opened from the file rail. Content comes from
 // wherever that file actually lives: a module inside an already-loaded manifest, a real
@@ -33,8 +34,8 @@ export default function FileTab({ chatId, entry, artifacts }) {
 
   const isMd = entry.name.endsWith('.md');
   return (
-    <div className="pad">
-      <div className="toolbar">
+    <div className="file-tab">
+      <div className="toolbar" style={{ margin: '12px 16px 0', paddingBottom: 10 }}>
         <span className="badge mono">{entry.path}</span>
         <span className="badge">{text.split('\n').length} lines</span>
         {entry.implements?.length > 0 && (
@@ -44,9 +45,11 @@ export default function FileTab({ chatId, entry, artifacts }) {
         )}
       </div>
       {isMd ? (
-        <div className="markdown-body" dangerouslySetInnerHTML={{ __html: markdownToHtml(text) }} />
+        <div className="markdown-body" style={{ padding: '0 16px 28px', overflow: 'auto' }} dangerouslySetInnerHTML={{ __html: markdownToHtml(text) }} />
       ) : (
-        <pre className="code-block">{text}</pre>
+        <div className="editor-host">
+          <CodeEditor value={text} path={entry.name} />
+        </div>
       )}
     </div>
   );

@@ -3,6 +3,7 @@
 // runs first — cheapest before expensive (P6) — and if code doesn't even parse there is no
 // point computing coverage/drift over it.
 import { verifyArtifacts, repairFeedback as tier1RepairFeedback } from './verify.js';
+import { resolveStack, extractRoutes as extractForStack } from '../stacks.js';
 
 /** Every module + package.json as a checkable file list for gates/verify.js. */
 function moduleFiles(backend) {
@@ -71,17 +72,14 @@ export function checkDrift(contract, backend) {
   return errors;
 }
 
-/** Extracts `router.<method>('<path>')` registrations from every route-kind module. */
-export function extractRoutes(modules) {
-  const re = /router\.(get|post|put|patch|delete)\(\s*['"`]([^'"`]+)['"`]/gi;
+/** Extracts route registrations from every route-kind module, using the patterns of the
+ * stack the contract actually declared (Express, FastAPI, Django, Spring — server/stacks.js)
+ * rather than assuming Express. */
+export function extractRoutes(modules, stack) {
   const routes = [];
   for (const m of modules) {
     if (m.kind !== 'route') continue;
-    let match;
-    re.lastIndex = 0;
-    while ((match = re.exec(m.code))) {
-      routes.push({ method: match[1].toUpperCase(), path: match[2], file: m.path });
-    }
+    for (const r of extractForStack(stack, m.code)) routes.push({ ...r, file: m.path });
   }
   return routes;
 }
@@ -90,7 +88,7 @@ export function extractRoutes(modules) {
  * against the contract's declared APIs. This also IS the API coverage check — a contract
  * API with no matching route in code is definitionally an uncovered feature. */
 export function checkConformance(contract, backend) {
-  const codeRoutes = extractRoutes(backend.modules);
+  const codeRoutes = extractRoutes(backend.modules, resolveStack(contract));
   const codeSet = new Set(codeRoutes.map((r) => `${r.method} ${r.path}`));
   const contractSet = new Set(contract.apis.map((a) => `${a.method} ${a.path}`));
   const errors = [];

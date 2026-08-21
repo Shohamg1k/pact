@@ -11,6 +11,11 @@
 // Bounded per the invariants: capped file count, capped file size, unknown extensions are
 // skipped rather than guessed at.
 
+import { spawn } from 'node:child_process';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+
 const MAX_FILES = 40;
 const MAX_BYTES = 400_000;
 
@@ -43,8 +48,43 @@ function loaderFor(file) {
   }
 }
 
+/** Run a real compiler/parser for languages esbuild cannot read. Returns [] when the
+ * toolchain is absent — an unavailable checker must SKIP, never fail a valid file. */
+async function checkExternal(f, tool) {
+  let dir;
+  try {
+    dir = await mkdtemp(path.join(tmpdir(), 'pact-syn-'));
+    const file = path.join(dir, path.basename(f.path));
+    await writeFile(file, f.content, 'utf8');
+    const spec = tool === 'py_compile'
+      ? { cmd: 'py', args: ['-m', 'py_compile', file] }
+      : { cmd: 'javac', args: ['-proc:none', '-d', dir, file] };
+    const err = await new Promise((resolve) => {
+      const p = spawn(spec.cmd, spec.args, { shell: true });
+      let e = '';
+      const t = setTimeout(() => { p.kill(); resolve(null); }, 20_000);
+      p.stderr.on('data', (d) => (e += d));
+      p.on('error', () => { clearTimeout(t); resolve(null); });   // toolchain missing -> skip
+      p.on('exit', (code) => { clearTimeout(t); resolve(code === 0 ? '' : e); });
+    });
+    if (err === null || err === '') return [];
+    // Compilers report `file:line: message`; keep the line so repair feedback stays precise.
+    const m = err.match(/:(\d+)[:\s]/);
+    const firstLine = err.trim().split(/\r?\n/)[0];
+    return [{ file: f.path, line: m ? Number(m[1]) : undefined, message: firstLine.slice(0, 200) }];
+  } catch {
+    return [];
+  } finally {
+    if (dir) await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 /** Parse one file, returning its syntax errors (empty when it is valid). */
 async function parseOne(f) {
+  const ext = f.path.slice(f.path.lastIndexOf('.')).toLowerCase();
+  if (f.content.length > MAX_BYTES) return [];
+  if (ext === '.py') return checkExternal(f, 'py_compile');
+  if (ext === '.java') return checkExternal(f, 'javac');
   const loader = loaderFor(f.path);
   if (!loader) return [];
   if (f.content.length > MAX_BYTES) return [];
@@ -86,7 +126,9 @@ export async function verifyArtifacts(files) {
   let skipped = 0;
   const issues = [];
   for (const f of subset) {
-    if (!loaderFor(f.path) || f.content.length > MAX_BYTES) {
+    const ext2 = f.path.slice(f.path.lastIndexOf('.')).toLowerCase();
+    const checkable = loaderFor(f.path) || ext2 === '.py' || ext2 === '.java';
+    if (!checkable || f.content.length > MAX_BYTES) {
       skipped++;
       continue;
     }

@@ -1,3 +1,4 @@
+import CodeEditor from './CodeEditor.jsx';
 import React, { useEffect, useState } from 'react';
 import { getArtifact } from '../api.js';
 
@@ -55,9 +56,9 @@ export default function CodeViewer({ chatId, role, refreshKey, jumpTo, onJumped 
           </div>
         ))}
       </div>
-      <div>
-        {!activeModule && <div className="empty-state">Select a file to view its contents.</div>}
-        {activeModule && <pre className="code-block">{activeModule.code}</pre>}
+      <div className="file-pane">
+        {!activeModule && <div className="empty-state" style={{ padding: 18 }}>Select a file to view its contents.</div>}
+        {activeModule && <div className="editor-host"><CodeEditor value={activeModule.code} path={activeModule.path} /></div>}
       </div>
     </div>
   );

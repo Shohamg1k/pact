@@ -139,7 +139,7 @@ export default function ArchitectureDiagram({ contract }) {
         <span className="legend-key"><i className="legend-swatch" style={{ background: COLOR.feature }} /> Feature</span>
         <span className="legend-key"><i className="legend-swatch" style={{ background: COLOR.api }} /> API</span>
         <span className="legend-key"><i className="legend-swatch" style={{ background: COLOR.collection }} /> Collection</span>
-        <span className="legend-key" style={{ marginLeft: 'auto' }}>
+        <span className="legend-note">
           solid = declared provenance (<code>feature_id</code>) · dashed = collection use inferred from the API's rules/shape
         </span>
       </div>

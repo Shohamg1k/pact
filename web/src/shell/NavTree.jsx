@@ -67,7 +67,7 @@ function ChatBlock({ chat, selected, jobs, running, roleLabels, onSelect, onOpen
 
 export default function NavTree({
   chats, projects, jobsByChat, activeChatId, running, roleLabels,
-  view, onView, onSelectChat, onNewChat, onNewProject, onOpenRole, inboxCount,
+  view, onView, onSelectChat, onNewChat, onNewProject, onOpenRole, inboxCount, panel,
 }) {
   const byProject = new Map(projects.map((p) => [p.id, []]));
   const unfiled = [];
@@ -112,6 +112,8 @@ export default function NavTree({
       </button>
 
       <div className="nav-scroll">
+        {panel && <div className="nav-panel">{panel}</div>}
+
         <div className="group-head">
           Projects
           <span className="actions">

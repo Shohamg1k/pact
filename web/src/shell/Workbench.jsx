@@ -11,6 +11,7 @@ import AgentPanel from './AgentPanel.jsx';
 import SettingsView from './SettingsView.jsx';
 import SaveTargetModal from './SaveTargetModal.jsx';
 import FileRail from './FileRail.jsx';
+import Splitter from './Splitter.jsx';
 import AdapterSettings from '../components/AdapterSettings.jsx';
 import Inbox from '../components/Inbox.jsx';
 import CodeViewer from '../components/CodeViewer.jsx';
@@ -68,13 +69,61 @@ export default function Workbench() {
   const [pendingBrief, setPendingBrief] = useState(null);
   const [startingBackend, setStartingBackend] = useState(false);
   const [inboxCount, setInboxCount] = useState(0);
-  const [showRail, setShowRail] = useState(true);
+  const [showRail, setShowRail] = useState(() => localStorage.getItem('pact.rail') !== '0');
+  const [showNav, setShowNav] = useState(() => localStorage.getItem('pact.nav') !== '0');
+  // Pane widths are user-owned and persisted; the centre column is the flexible one.
+  const [navW, setNavW] = useState(() => Number(localStorage.getItem('pact.navW')) || 280);
+  const [railW, setRailW] = useState(() => Number(localStorage.getItem('pact.railW')) || 232);
+  // The output pane's default is a FRACTION of the viewport, not a fixed 560px: on a
+  // 1280px screen a fixed width left the conversation with ~180px, which is exactly the
+  // "important thing doesn't get the space" problem. Centre always keeps >= MIN_CENTRE.
+  const [outW, setOutW] = useState(() => {
+    const saved = Number(localStorage.getItem('pact.outW'));
+    const max = Math.max(320, window.innerWidth - 280 - 232 - 360);
+    return Math.min(saved || Math.round(window.innerWidth * 0.34), max);
+  });
   const [interactive, setInteractive] = useState(false);
   const folderRef = useRef(null);
   const unsubRef = useRef(null);
 
+  useEffect(() => { localStorage.setItem('pact.navW', String(navW)); }, [navW]);
+  useEffect(() => { localStorage.setItem('pact.outW', String(outW)); }, [outW]);
+  useEffect(() => { localStorage.setItem('pact.railW', String(railW)); }, [railW]);
+  useEffect(() => { localStorage.setItem('pact.rail', showRail ? '1' : '0'); }, [showRail]);
+  useEffect(() => { localStorage.setItem('pact.nav', showNav ? '1' : '0'); }, [showNav]);
+
+  // Clamp so no drag — and no window resize — can starve the centre pane.
+  const MIN_CENTRE = 300;
+  const clamp = (v, lo, hi) => Math.min(Math.max(hi, lo), Math.max(lo, v));
+  const maxOut = useCallback(
+    () => Math.max(320, window.innerWidth - (showNav ? navW : 0) - (showRail ? railW : 0) - MIN_CENTRE),
+    [navW, railW, showNav, showRail],
+  );
+  const resizeNav = (dx) => setNavW((w) => clamp(w + dx, 200, 460));
+  const resizeOut = (dx) => setOutW((w) => clamp(w - dx, 300, maxOut()));
+  const resizeRail = (dx) => setRailW((w) => clamp(w - dx, 170, 400));
+
+  // Shrinking the window must give space back to the centre rather than pushing it to 0.
+  useEffect(() => {
+    const onResize = () => setOutW((w) => Math.min(w, maxOut()));
+    window.addEventListener('resize', onResize);
+    onResize();
+    return () => window.removeEventListener('resize', onResize);
+  }, [maxOut]);
+
   const roleLabels = useMemo(() => Object.fromEntries(roles.map((r) => [r.id, r.label])), [roles]);
   const activeAdapter = adapters.find((a) => a.available);
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      if (e.key === 'b') { e.preventDefault(); setShowNav((v) => !v); }
+      if (e.key === 'j') { e.preventDefault(); setShowRail((v) => !v); }
+      if (e.key === 'w') { e.preventDefault(); setActiveTabId((cur) => { if (cur) closeTabById(cur); return cur; }); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   useEffect(() => {
     getAgentGraph().then((r) => setRoles(r.roles ?? []));
@@ -154,6 +203,15 @@ export default function Workbench() {
     setTabs((prev) => (prev.some((t) => t.id === id) ? prev : [...prev, { ...spec, id, chatId: activeChatId }]));
     setActiveTabId(id);
   }, [activeChatId]);
+
+  const closeTabById = useCallback((id) => {
+    setTabs((prev) => {
+      const idx = prev.findIndex((t) => t.id === id);
+      const next = prev.filter((t) => t.id !== id);
+      setActiveTabId((cur) => (cur !== id ? cur : next[Math.max(0, idx - 1)]?.id ?? null));
+      return next;
+    });
+  }, []);
 
   const closeTab = useCallback((id, e) => {
     e?.stopPropagation();
@@ -259,9 +317,19 @@ export default function Workbench() {
 
   const activeFilePath = activeTab?.kind === 'file' ? activeTab.entry.path : null;
 
+  const cols = [
+    showNav ? `${navW}px` : '0px',
+    showNav ? '5px' : '0px',
+    '1fr',
+    '5px',
+    `${outW}px`,
+    showRail ? '5px' : '0px',
+    showRail ? `${railW}px` : '0px',
+  ].join(' ');
+
   return (
-    <div className={`shell ${showRail ? '' : 'no-rail'}`}>
-      <div className="pane nav">
+    <div className="shell" style={{ gridTemplateColumns: cols }}>
+      <div className="pane nav" style={{ display: showNav ? 'flex' : 'none' }}>
         <NavTree
           chats={chats} projects={projects} jobsByChat={jobsByChat}
           activeChatId={activeChatId} running={running} roleLabels={roleLabels}
@@ -273,12 +341,25 @@ export default function Workbench() {
             if (name && name.trim()) { await createProject(name.trim()); await refreshLists(); }
           }}
           onOpenRole={openRole}
+          panel={
+            <SidePanel
+              view={view} roles={roles} existing={existing} running={running} failed={failed}
+              selected={selected} roleLabels={roleLabels} busy={busy || !!running} error={genError}
+              activeChatId={activeChatId} chat={chat} artifacts={artifacts}
+              interactive={interactive} onInteractive={setInteractive}
+              onToggle={(id) => setSelected((s2) => { const n = new Set(s2); n.has(id) ? n.delete(id) : n.add(id); return n; })}
+              onGenerate={handleGenerate} onOpenAdapters={() => setShowAdapters(true)}
+              onAnswered={() => loadChat(activeChatId)} onOpenTab={openTab}
+            />
+          }
         />
         <div className="nav-foot">
           <span className="hint" style={{ flex: 1 }}>{activeAdapter ? activeAdapter.name : 'no adapter'}</span>
           <button className="icon-btn" title="Adapter details" onClick={() => setShowAdapters(true)}>⚙</button>
         </div>
       </div>
+
+      {showNav && <Splitter ariaLabel="Resize sidebar" onDrag={resizeNav} onDoubleClick={() => setNavW(288)} />}
 
       <div className="pane centre">
         {!activeChatId ? (
@@ -294,16 +375,9 @@ export default function Workbench() {
         )}
       </div>
 
+      <Splitter ariaLabel="Resize outputs" onDrag={resizeOut} onDoubleClick={() => setOutW(560)} />
+
       <div className="pane out">
-        <SidePanel
-          view={view} roles={roles} existing={existing} running={running} failed={failed}
-          selected={selected} roleLabels={roleLabels} busy={busy || !!running} error={genError}
-          interactive={interactive} onInteractive={setInteractive}
-          activeChatId={activeChatId} chat={chat} artifacts={artifacts}
-          onToggle={(id) => setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; })}
-          onGenerate={handleGenerate} onOpenAdapters={() => setShowAdapters(true)}
-          onAnswered={() => loadChat(activeChatId)} onOpenTab={openTab}
-        />
         {tabs.length > 0 && (
           <div className="tabstrip">
             {tabs.map((t) => {
@@ -330,7 +404,9 @@ export default function Workbench() {
         </div>
       </div>
 
-      <div className="pane rail">
+      {showRail && <Splitter ariaLabel="Resize file rail" onDrag={resizeRail} onDoubleClick={() => setRailW(232)} />}
+
+      <div className="pane rail" style={{ display: showRail ? 'flex' : 'none' }}>
         <FileRail
           chatTitle={chat?.chat?.title}
           artifacts={artifacts}
@@ -356,8 +432,11 @@ export default function Workbench() {
           </span>
         )}
         <span className="status-item">{activeAdapter?.name ?? 'no adapter'}</span>
-        <span className="status-item clickable" title="Toggle the file rail" onClick={() => setShowRail((v) => !v)}>
-          {showRail ? '▐ files' : '▌ files'}
+        <span className="status-item clickable" title="Toggle the sidebar (Ctrl+B)" onClick={() => setShowNav((v) => !v)}>
+          {showNav ? '◧ sidebar' : '▫ sidebar'}
+        </span>
+        <span className="status-item clickable" title="Toggle the file rail (Ctrl+J)" onClick={() => setShowRail((v) => !v)}>
+          {showRail ? '◨ files' : '▫ files'}
         </span>
       </div>
 
@@ -367,40 +446,31 @@ export default function Workbench() {
   );
 }
 
-/** The right pane's upper section: whichever nav view is active. Capped in height so the
- * output tabs below it always stay visible. */
+/** The active nav view's panel. It lives in the LEFT pane, not the output pane: putting
+ * it on the right meant Settings or the agent picker permanently occupied ~half the
+ * space the actual outputs needed. */
 function SidePanel(props) {
   const { view, activeChatId, chat, artifacts, onOpenTab } = props;
-  const wrap = (children, pad) => (
-    <div style={{ borderBottom: '1px solid var(--border-soft)', maxHeight: '50%', overflowY: 'auto', flexShrink: 0, padding: pad }}>
-      {children}
-    </div>
-  );
-
-  if (view === 'agents') return wrap(<AgentPanel {...props} disabled={!activeChatId} />);
-  if (view === 'settings') return wrap(<SettingsView chatId={activeChatId} artifacts={chat?.artifacts} onOpenAdapters={props.onOpenAdapters} />);
+  if (view === 'agents') return <AgentPanel {...props} disabled={!activeChatId} />;
+  if (view === 'settings') return <SettingsView chatId={activeChatId} artifacts={chat?.artifacts} onOpenAdapters={props.onOpenAdapters} />;
   if (view === 'inbox') {
-    return wrap(
-      <>
-        <div className="section-title">Inbox</div>
+    return (
+      <div style={{ padding: '4px 12px 12px' }}>
         {activeChatId ? <Inbox chatId={activeChatId} onAnswered={props.onAnswered} /> : <div className="hint">No chat selected.</div>}
-      </>,
-      '12px 14px',
+      </div>
     );
   }
   if (view === 'proof') {
-    return wrap(
-      <>
-        <div className="section-title">Verification</div>
+    return (
+      <div style={{ padding: '4px 12px 12px' }}>
         <div className="hint" style={{ marginBottom: 9, lineHeight: 1.6 }}>
-          Re-derive the handoff claim from the bytes on disk, and read the contract↔code trace both directions.
+          Re-derive the handoff claim from the bytes on disk, and read the contract&#8596;code trace both directions.
         </div>
-        <div style={{ display: 'flex', gap: 6 }}>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           <button className="btn small" disabled={!activeChatId} onClick={() => onOpenTab({ kind: 'provenance', title: 'Provenance & proof' })}>Provenance</button>
           <button className="btn small" disabled={!activeChatId || !artifacts?.architect} onClick={() => onOpenTab({ kind: 'trace', title: 'Trace matrix' })}>Trace matrix</button>
         </div>
-      </>,
-      '12px 14px',
+      </div>
     );
   }
   return null;

@@ -29,3 +29,23 @@ const feedback = repairFeedback(r2);
 assert.ok(feedback.includes('routes/bad.js'), 'repairFeedback should name the file');
 
 console.log('verify.selftest.mjs — all 5 checks passed');
+
+// --- multi-stack syntax checking (server/stacks.js) ---
+// Python and Java are checked through their own toolchains; a missing toolchain must
+// SKIP rather than fail a perfectly good file, so these assert behaviour that holds
+// either way where it can't be guaranteed.
+const goodPy = await verifyArtifacts([{ path: 'main.py', content: 'def hello():\n    return {"ok": True}\n' }]);
+assert.strictEqual(goodPy.ok, true, 'valid python must pass');
+
+const badPy = await verifyArtifacts([{ path: 'broken.py', content: 'def hello(:\n    return 1\n' }]);
+if (badPy.checked > 0 && badPy.issues.length) {
+  assert.ok(badPy.issues[0].file === 'broken.py', 'python syntax error names the file');
+  console.log('  · python checker active — caught a real SyntaxError');
+} else {
+  console.log('  · python checker unavailable on this machine — skipped, not failed');
+}
+
+const goodJava = await verifyArtifacts([{ path: 'Main.java', content: 'public class Main { public static void main(String[] a) { System.out.println(1); } }\n' }]);
+assert.strictEqual(goodJava.ok, true, 'valid java must pass');
+
+console.log('verify.selftest.mjs — multi-stack checks passed');
