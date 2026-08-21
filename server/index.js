@@ -2,12 +2,18 @@
 // extend it, don't restructure it, without updating web/src/api.js in the same change.
 import express from 'express';
 import cors from 'cors';
+import path from 'node:path';
 import { startRun, subscribe, resumeAfterAnswer, getPreview } from './orchestrator.js';
-import { getRun, readArtifact, listRuns } from './kernel/store.js';
+import { getRun, readArtifact, listRuns, runDir } from './kernel/store.js';
 import { gate } from './gate.js';
 import { adapters, probeAll } from './adapters/index.js';
 import { launchCommandFor } from './adapters/registry.js';
 import { usageSnapshot } from './router.js';
+import { listInboxItems, getInboxItem, approveInboxItem, rejectInboxItem, ackInboxItem, findRunIdForItem } from './kernel/inbox.js';
+import { exportPostman } from './connectors/postman.js';
+import { exportGithubPR } from './connectors/github.js';
+import { exportMiro } from './connectors/miro.js';
+import { exportSlack } from './connectors/slack.js';
 
 const app = express();
 app.use(cors());
@@ -95,6 +101,112 @@ app.post('/api/preview/:id/request', async (req, res) => {
     res.json(result);
   } catch (e) {
     res.status(502).json({ code: 'PREVIEW_UNREACHABLE', detail: e.message });
+  }
+});
+
+// §11 P1: the single decision queue — clarifications (kernel/interrupts.js) don't route
+// through kernel/inbox.js's list, since that module owns only connector_write/review; a
+// unified view across types can layer on top later without changing either module's shape.
+app.get('/api/inbox', async (req, res) => {
+  const { status, runId } = req.query;
+  const runIds = runId ? [runId] : await listRuns();
+  const items = [];
+  for (const rid of runIds) {
+    const runItems = await listInboxItems(rid);
+    items.push(...runItems.map((i) => ({ ...i, runId: rid })));
+  }
+  res.json({ items: status ? items.filter((i) => i.status === status) : items });
+});
+
+async function resolveInboxTarget(req, res) {
+  const itemId = req.params.id;
+  const runId = typeof req.body?.runId === 'string' && req.body.runId ? req.body.runId : await findRunIdForItem(itemId);
+  if (!runId) {
+    res.status(404).json({ code: 'NOT_FOUND' });
+    return null;
+  }
+  const item = await getInboxItem(runId, itemId);
+  if (!item) {
+    res.status(404).json({ code: 'NOT_FOUND' });
+    return null;
+  }
+  return { runId, item };
+}
+
+// LOCKED (§11): approving is what lets a subsequent POST /api/connectors/:name through
+// gate.js — refuses if the item is already tainted and hasn't been acked (SEC-4).
+app.post('/api/inbox/:id/approve', async (req, res) => {
+  const target = await resolveInboxTarget(req, res);
+  if (!target) return;
+  if (target.item.tainted) return res.status(403).json({ code: 'TAINT_UNACKNOWLEDGED', item: target.item });
+  await approveInboxItem(target.runId, target.item.id);
+  res.json({ ok: true, item: await getInboxItem(target.runId, target.item.id) });
+});
+
+app.post('/api/inbox/:id/reject', async (req, res) => {
+  const target = await resolveInboxTarget(req, res);
+  if (!target) return;
+  await rejectInboxItem(target.runId, target.item.id);
+  res.json({ ok: true, item: await getInboxItem(target.runId, target.item.id) });
+});
+
+// LOCKED (§11, §19 CLI-3, SEC-4): a human has read tainted content — required before an
+// approved-but-tainted item's action can execute.
+app.patch('/api/inbox/:id/ack', async (req, res) => {
+  const target = await resolveInboxTarget(req, res);
+  if (!target) return;
+  await ackInboxItem(target.runId, target.item.id);
+  res.json({ ok: true, item: await getInboxItem(target.runId, target.item.id) });
+});
+
+// LOCKED (§11, §18, SEC-1): reaches this handler only after gate.js confirms an approved,
+// non-tainted connector_write Inbox item for this exact {runId, name} — see gate.js. A
+// failed connector never fails the run (§18): `.pact/` files remain canonical regardless.
+app.post('/api/connectors/:name', async (req, res) => {
+  const { name } = req.params;
+  const { runId, ...params } = req.body ?? {};
+  try {
+    const run = await getRun(runId);
+    if (!run) return res.status(404).json({ code: 'NOT_FOUND', detail: 'unknown runId' });
+    const contractRaw = await readArtifact(runId, 'architecture.json');
+    const contract = contractRaw ? JSON.parse(contractRaw) : null;
+    const preview = getPreview(runId);
+
+    let result;
+    switch (name) {
+      case 'postman': {
+        if (!contract) return res.status(409).json({ code: 'NOT_READY', detail: 'architecture.json not written yet' });
+        const outputDir = path.join(runDir(runId), 'connectors', 'postman');
+        result = await exportPostman(outputDir, contract, { baseUrl: preview?.baseUrl, ...params });
+        break;
+      }
+      case 'github': {
+        if (!contract) return res.status(409).json({ code: 'NOT_READY', detail: 'architecture.json not written yet' });
+        if (!preview) return res.status(409).json({ code: 'NOT_READY', detail: 'no generated tree on disk yet (the run phase has not booted a preview)' });
+        result = await exportGithubPR(path.join(runDir(runId), 'preview'), contract, { runId, ...params });
+        break;
+      }
+      case 'miro': {
+        if (!contract) return res.status(409).json({ code: 'NOT_READY', detail: 'architecture.json not written yet' });
+        result = await exportMiro(contract, params);
+        break;
+      }
+      case 'slack': {
+        const traceRaw = await readArtifact(runId, 'trace.json');
+        const contractTestsRaw = await readArtifact(runId, 'contracttests.json');
+        result = await exportSlack(run, traceRaw ? JSON.parse(traceRaw) : null, {
+          preview: preview?.baseUrl,
+          contractTests: contractTestsRaw ? JSON.parse(contractTestsRaw) : null,
+          ...params,
+        });
+        break;
+      }
+      default:
+        return res.status(404).json({ code: 'UNKNOWN_CONNECTOR', detail: name });
+    }
+    res.json({ ok: true, result });
+  } catch (e) {
+    res.status(502).json({ code: 'CONNECTOR_FAILED', detail: e.message });
   }
 });
 
