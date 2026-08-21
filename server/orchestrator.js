@@ -27,18 +27,25 @@ const PHASES = ['agent1', 'gateV1', 'agent2', 'gateV2', 'run', 'connectors'];
  */
 export async function startRun(brief, projectName = null, opts = {}) {
   const runId = randomUUID().slice(0, 8);
+  const mode = opts.mode ?? 'batch';
+  const pinnedAdapter = opts.pinnedAdapter ?? null; // ROUTE-8: a human pin always beats the ladder's choice
   await ensureRunDir(runId);
   await writeArtifact(runId, 'requirement.md', brief);
   await patchRun(runId, {
     id: runId,
     projectName,
+    mode,
+    pinnedAdapter,
     status: 'created',
     brief,
     createdAt: new Date().toISOString(),
     phases: PHASES.map((name) => ({ name, status: 'pending' })),
   });
 
-  runPipeline(runId, brief, opts).catch((e) => {
+  // Stored on run.json (not just passed through the call stack) so a resume after a
+  // clarifying question — a separate HTTP request, possibly minutes later — re-enters the
+  // pipeline with the SAME mode/pin rather than silently reverting to defaults.
+  runPipeline(runId, brief, { mode, projectName, pinnedAdapter }).catch((e) => {
     appendLog(runId, 'worklog.jsonl', { ts: Date.now(), phase: 'orchestrator', event: 'error', detail: e.message });
     patchRun(runId, { status: 'failed' });
     emit(runId, 'run', 'failed', { error: e.message });
@@ -58,23 +65,29 @@ async function setPhase(runId, phase, status, detail) {
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function runPipeline(runId, brief, opts) {
+  const pinnedAdapter = opts.pinnedAdapter ?? undefined;
+
   await setPhase(runId, 'agent1', 'running', {});
-  const result = await runArchitect(runId, brief, { mode: opts.mode ?? 'batch' });
+  const result = await runArchitect(runId, brief, {
+    mode: opts.mode ?? 'batch',
+    projectName: opts.projectName ?? null,
+    pinnedAdapter,
+  });
 
   if (result.status === 'awaiting_human') {
     await setPhase(runId, 'agent1', 'awaiting_human', { itemId: result.item.id, question: result.item.payload.question });
     return; // resumes via POST /api/runs/:id/answer -> resumeAfterAnswer()
   }
 
-  await setPhase(runId, 'agent1', 'passed', { gaps: result.gaps });
+  await setPhase(runId, 'agent1', 'passed', { gaps: result.gaps, savedTokens: result.savedTokens });
   await setPhase(runId, 'gateV1', 'passed', { contractHash: result.hash });
 
   // Agent 2 (Backend Engineer) + Gate V2 tiers 1-2 are real, mirroring the agent1/gateV1
   // pattern above: the gate is embedded inside runBackend's repair loop (PRD §8.2/§16),
   // so by the time it returns the manifest has already passed or been gracefully pruned.
   await setPhase(runId, 'agent2', 'running', {});
-  const backendResult = await runBackend(runId, result.contract);
-  await setPhase(runId, 'agent2', 'passed', { gaps: backendResult.gaps });
+  const backendResult = await runBackend(runId, result.contract, { pinnedAdapter });
+  await setPhase(runId, 'agent2', 'passed', { gaps: backendResult.gaps, savedTokens: backendResult.savedTokens });
   await setPhase(runId, 'gateV2', 'passed', { backendHash: backendResult.hash });
 
   const trace = buildTrace(result.contract, backendResult.manifest, backendResult.gaps);
@@ -90,10 +103,13 @@ async function runPipeline(runId, brief, opts) {
   await patchRun(runId, { status: 'done_stub' });
 }
 
-/** POST /api/runs/:id/answer -> here. Records the answer, then re-enters the pipeline. */
-export async function resumeAfterAnswer(runId, itemId, answer, opts = {}) {
+/** POST /api/runs/:id/answer -> here. Records the answer, then re-enters the pipeline with
+ * the SAME mode/projectName/pin the run started with (read back from run.json, not the
+ * caller — a resume is a separate HTTP request and must not silently revert to defaults). */
+export async function resumeAfterAnswer(runId, itemId, answer, overrideOpts = {}) {
   await answerClarification(runId, itemId, answer);
   const run = await getRun(runId);
+  const opts = { mode: run.mode ?? 'batch', projectName: run.projectName ?? null, pinnedAdapter: run.pinnedAdapter ?? undefined, ...overrideOpts };
   runPipeline(runId, run.brief, opts).catch((e) => {
     appendLog(runId, 'worklog.jsonl', { ts: Date.now(), phase: 'orchestrator', event: 'error', detail: e.message });
     patchRun(runId, { status: 'failed' });

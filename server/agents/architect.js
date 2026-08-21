@@ -15,6 +15,7 @@ import {
 } from '../kernel/validator.js';
 import { runDir, writeArtifact, appendLog, readLog } from '../kernel/store.js';
 import { askClarification } from '../kernel/interrupts.js';
+import { readProjectMemory, recordProjectMemory, renderProjectMemory } from '../memory.js';
 
 const ROLE_PROMPT = await readFile(new URL('../prompts/architect.md', import.meta.url), 'utf8');
 const MAX_REPAIRS = 2; // PRD §8.2: capped at 2 retries, then escalate the ladder rung
@@ -22,7 +23,7 @@ const MAX_REPAIRS = 2; // PRD §8.2: capped at 2 retries, then escalate the ladd
 /**
  * @param {string} runId
  * @param {string} brief - VERBATIM, never paraphrased
- * @param {{mode?: 'interactive'|'batch'}} opts
+ * @param {{mode?: 'interactive'|'batch', projectName?: string|null, pinnedAdapter?: string}} opts
  */
 export async function runArchitect(runId, brief, opts = {}) {
   const mode = opts.mode ?? 'batch';
@@ -37,21 +38,27 @@ export async function runArchitect(runId, brief, opts = {}) {
   // a stable-ish section — they are the human's own answers, not model output.
   const answeredClarifications = await previousAnswers(runId);
 
+  // CORE-10: decisions/naming/stack preference from prior runs of the SAME project. Placed
+  // in the stable prefix (CTX-2) — it changes only between projects, not between attempts.
+  const projectMemory = await readProjectMemory(opts.projectName ?? null);
+  const memorySection = renderProjectMemory(projectMemory);
+
   // attempts 0..MAX_REPAIRS are same-rung content repairs; attempt MAX_REPAIRS+1 is the
   // "escalate the ladder rung" step — same repair note, a DIFFERENT adapter forced.
   const totalAttempts = MAX_REPAIRS + 2;
 
   for (let attempt = 0; attempt < totalAttempts; attempt++) {
     const isEscalation = attempt === totalAttempts - 1;
-    let rungs = ladder();
+    let rungs = ladder(opts.pinnedAdapter); // ROUTE-8: pinned ?? laddered
     if (isEscalation && firstAdapterId) {
       rungs = rungs.filter((a) => a.id !== firstAdapterId);
-      if (rungs.length === 0) rungs = ladder(); // nothing else available — retry same rung anyway
+      if (rungs.length === 0) rungs = ladder(opts.pinnedAdapter); // nothing else available — retry same rung anyway
     }
 
     const { text: prompt, report } = buildPack(
       [
         { name: 'role', content: ROLE_PROMPT },
+        memorySection ? { name: 'project-memory', content: memorySection } : null,
         { name: 'brief', content: `## Client brief\n\n${brief}` },
         answeredClarifications
           ? { name: 'clarifications', content: `## Human answers to prior clarifying questions\n\n${answeredClarifications}` }
@@ -82,7 +89,7 @@ export async function runArchitect(runId, brief, opts = {}) {
     lastResult = result;
 
     if (result.valid) {
-      return commitContract(runId, result.contract, [], report);
+      return commitContract(runId, result.contract, [], report, opts.projectName);
     }
 
     // Clarify-or-assume boundary: once schema/coverage/orphans all pass and completeness
@@ -97,7 +104,13 @@ export async function runArchitect(runId, brief, opts = {}) {
         }
         // round cap already hit — fall through to accept with flagged assumptions
       }
-      return commitContract(runId, result.contract, ['UNDERSPECIFIED: proceeding with every low-confidence assumption flagged'], report);
+      return commitContract(
+        runId,
+        result.contract,
+        ['UNDERSPECIFIED: proceeding with every low-confidence assumption flagged'],
+        report,
+        opts.projectName,
+      );
     }
 
     if (attempt < totalAttempts - 1) {
@@ -115,7 +128,7 @@ export async function runArchitect(runId, brief, opts = {}) {
   if (pruned) {
     const revalidated = validateContract(pruned.contract);
     if (revalidated.valid || onlyUnderspecified(revalidated.errors)) {
-      return commitContract(runId, revalidated.contract ?? pruned.contract, pruned.gaps, { savedTokens: 0 });
+      return commitContract(runId, revalidated.contract ?? pruned.contract, pruned.gaps, { savedTokens: 0 }, opts.projectName);
     }
   }
 
@@ -147,16 +160,18 @@ function deriveClarifyingQuestion(contract, brief) {
   );
 }
 
-async function commitContract(runId, contract, gaps, packReport) {
+async function commitContract(runId, contract, gaps, packReport, projectName) {
   const hash = await writeArtifact(runId, 'architecture.json', contract);
   await writeArtifact(runId, 'openapi.yaml', deriveOpenApi(contract));
   await writeArtifact(runId, 'schema.mongo.json', deriveMongoSchema(contract));
   await writeArtifact(runId, 'decisions.md', deriveDecisions(contract, gaps));
+  const savedTokens = packReport?.savedTokens ?? 0;
   await appendLog(runId, 'worklog.jsonl', {
     ts: Date.now(),
     phase: 'agent1',
     event: 'committed',
-    detail: { hash, gaps, savedTokens: packReport?.savedTokens ?? 0 },
+    detail: { hash, gaps, savedTokens },
   });
-  return { status: 'passed', contract, hash, gaps };
+  await recordProjectMemory(projectName ?? null, runId, contract); // CORE-10
+  return { status: 'passed', contract, hash, gaps, savedTokens };
 }

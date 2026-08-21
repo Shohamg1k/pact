@@ -68,10 +68,12 @@ export function usageSnapshot() {
   });
 }
 
-/** Escalation ladder: available, not cooling down, cheapest tier first. A human pin (ROUTE-8) always wins. */
+/** Escalation ladder: available, not cooling down, cheapest tier first. A human pin (ROUTE-8)
+ * always wins — but only while it's actually usable; a pin on cooldown falls back to the
+ * laddered order rather than forcing a call that's guaranteed to fail. */
 export function ladder(pinnedAdapterId) {
   if (pinnedAdapterId) {
-    const pinned = allAdapters.find((a) => a.id === pinnedAdapterId && a.available);
+    const pinned = allAdapters.find((a) => a.id === pinnedAdapterId && a.available && !onCooldown(a));
     if (pinned) return [pinned];
   }
   return allAdapters.filter((a) => a.available && !onCooldown(a)).sort((a, b) => a.tier - b.tier);

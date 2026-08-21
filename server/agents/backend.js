@@ -19,8 +19,9 @@ const MAX_REPAIRS = 2; // PRD §8.2/§16: capped at 2 retries, then escalate the
  * @param {string} runId
  * @param {object} contract - the VALIDATED architecture contract (kernel `read` never
  *   returns unvalidated artifacts — PRD §8.3)
+ * @param {{pinnedAdapter?: string}} opts
  */
-export async function runBackend(runId, contract) {
+export async function runBackend(runId, contract, opts = {}) {
   const cwd = path.join(runDir(runId), 'sandbox-agent2'); // SEC-2: never the user's real repo
 
   // Read the EXACT bytes written to disk at Gate V1 commit time, never a re-serialization
@@ -38,10 +39,10 @@ export async function runBackend(runId, contract) {
 
   for (let attempt = 0; attempt < totalAttempts; attempt++) {
     const isEscalation = attempt === totalAttempts - 1;
-    let rungs = ladder();
+    let rungs = ladder(opts.pinnedAdapter); // ROUTE-8: pinned ?? laddered
     if (isEscalation && firstAdapterId) {
       rungs = rungs.filter((a) => a.id !== firstAdapterId);
-      if (rungs.length === 0) rungs = ladder();
+      if (rungs.length === 0) rungs = ladder(opts.pinnedAdapter);
     }
 
     const { text: prompt, report } = buildPack(
@@ -142,11 +143,12 @@ function repairFeedbackSchema(errors) {
 
 async function commitBackend(runId, manifest, gaps, packReport) {
   const hash = await writeArtifact(runId, 'backend.json', manifest);
+  const savedTokens = packReport?.savedTokens ?? 0;
   await appendLog(runId, 'worklog.jsonl', {
     ts: Date.now(),
     phase: 'agent2',
     event: 'committed',
-    detail: { hash, gaps, savedTokens: packReport?.savedTokens ?? 0 },
+    detail: { hash, gaps, savedTokens },
   });
-  return { status: 'passed', manifest, hash, gaps };
+  return { status: 'passed', manifest, hash, gaps, savedTokens };
 }

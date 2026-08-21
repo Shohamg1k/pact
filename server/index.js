@@ -19,13 +19,18 @@ app.use(gate);
 app.get('/api/health', (_req, res) => res.json({ ok: true, ts: Date.now() }));
 
 app.post('/api/runs', async (req, res) => {
-  const { brief, projectName, mode } = req.body ?? {};
+  const { brief, projectName, mode, pinnedAdapter } = req.body ?? {};
   if (!brief || typeof brief !== 'string' || brief.length > 4000) {
     return res.status(400).json({ code: 'INVALID_BRIEF', detail: 'brief must be a string, 1-4000 chars' });
   }
   // CORE-6: 'interactive' (ask ONE question below 0.7 completeness) or 'batch' (default —
   // proceed with every low-confidence assumption flagged, never blocks).
-  const runId = await startRun(brief, projectName ?? null, { mode: mode === 'interactive' ? 'interactive' : 'batch' });
+  // ROUTE-8: an optional adapter id pin — beats the ladder's own choice, falls back to it
+  // if the pin is unavailable/cooling down (router.js `ladder()`).
+  const runId = await startRun(brief, projectName ?? null, {
+    mode: mode === 'interactive' ? 'interactive' : 'batch',
+    pinnedAdapter: typeof pinnedAdapter === 'string' && pinnedAdapter ? pinnedAdapter : undefined,
+  });
   res.json({ runId });
 });
 
