@@ -1,149 +1,91 @@
-// Agent 1 — Solution Architect (PRD §13 CORE-1..8). Brief in, validated architecture
-// contract out. This is the ONLY place the brief and Agent 1's role prompt ever meet —
-// Agent 2 never sees either (CORE-4).
+// Agent role: Solution Architect (PRD §13 CORE-1..8). Brief in (or a Product Manager's
+// feature list, when pm was also run — registry.js), validated architecture contract
+// out. Thin config module on top of agents/engine.js's shared repair loop; the one bit
+// of role-specific logic that stays here is CORE-6 clarify-or-assume, which no other
+// role needs (yet), so it isn't in the generic engine.
 import { readFile } from 'node:fs/promises';
-import path from 'node:path';
-import { ladder, completeWithLadder } from '../router.js';
-import { buildPack } from '../pack.js';
-import { extractJson } from './extractJson.js';
+import { runRepairLoop, commitArtifact, failJob } from './engine.js';
 import { deriveOpenApi, deriveMongoSchema, deriveDecisions } from './derive.js';
-import {
-  validateContract,
-  repairFeedback,
-  onlyUnderspecified,
-  pruneInvalidElements,
-} from '../kernel/validator.js';
-import { runDir, writeArtifact, appendLog, readLog } from '../kernel/store.js';
+import { ArchitectureContractSchema } from '../schemas/contract.js';
+import { validateContract, onlyUnderspecified, pruneInvalidElements, repairFeedback } from '../kernel/validator.js';
+import { writeChatFile, appendChatLog, readChatLog, getArtifact } from '../kernel/chats.js';
 import { askClarification } from '../kernel/interrupts.js';
-import { readProjectMemory, recordProjectMemory, renderProjectMemory } from '../memory.js';
+import { recordProjectMemory } from '../memory.js';
 
 const ROLE_PROMPT = await readFile(new URL('../prompts/architect.md', import.meta.url), 'utf8');
-const MAX_REPAIRS = 2; // PRD §8.2: capped at 2 retries, then escalate the ladder rung
 
 /**
- * @param {string} runId
+ * @param {string} chatId
  * @param {string} brief - VERBATIM, never paraphrased
  * @param {{mode?: 'interactive'|'batch', projectName?: string|null, pinnedAdapter?: string}} opts
  */
-export async function runArchitect(runId, brief, opts = {}) {
+export async function runArchitect(chatId, brief, opts = {}) {
   const mode = opts.mode ?? 'batch';
-  const cwd = path.join(runDir(runId), 'sandbox-agent1'); // SEC-2: never the user's real repo
+  const answeredClarifications = await previousAnswers(chatId);
+  const pmOutput = await getArtifact(chatId, 'pm'); // registry.js: architect reads pm's output when present
 
-  let repairNote = '';
-  let firstAdapterId = null;
-  let lastResult = null;
-  let lastRaw = null;
+  const buildSections = (repairNote) => [
+    { name: 'role', content: ROLE_PROMPT },
+    pmOutput ? { name: 'pm', content: `## Product Manager's feature list (structured, use this over re-deriving from the brief)\n\n${JSON.stringify(pmOutput, null, 2)}` } : null,
+    { name: 'brief', content: `## Client brief\n\n${brief}` },
+    answeredClarifications ? { name: 'clarifications', content: `## Human answers to prior clarifying questions\n\n${answeredClarifications}` } : null,
+    repairNote ? { name: 'repair', content: repairNote, budget: 2000, policy: 'head' } : null,
+  ].filter(Boolean);
 
-  // Prior rounds of clarification (if this is a resumed run) ride into every attempt as
-  // a stable-ish section — they are the human's own answers, not model output.
-  const answeredClarifications = await previousAnswers(runId);
+  // The engine's gate treats "only UNDERSPECIFIED" as a pass-through (valid:true) —
+  // that's not a repairable defect, it's CORE-6's ask-or-assume signal, decided AFTER
+  // the loop returns, not by spending more repair attempts on it.
+  const gate = async (contract) => {
+    const result = validateContract(contract);
+    if (result.valid || onlyUnderspecified(result.errors)) return { valid: true, errors: [] };
+    return { valid: false, errors: result.errors };
+  };
 
-  // CORE-10: decisions/naming/stack preference from prior runs of the SAME project. Placed
-  // in the stable prefix (CTX-2) — it changes only between projects, not between attempts.
-  const projectMemory = await readProjectMemory(opts.projectName ?? null);
-  const memorySection = renderProjectMemory(projectMemory);
+  const loopResult = await runRepairLoop({
+    chatId,
+    role: 'architect',
+    buildSections,
+    schema: ArchitectureContractSchema,
+    gate,
+    gateRepairFeedback: repairFeedback,
+    pinnedAdapter: opts.pinnedAdapter,
+  });
 
-  // attempts 0..MAX_REPAIRS are same-rung content repairs; attempt MAX_REPAIRS+1 is the
-  // "escalate the ladder rung" step — same repair note, a DIFFERENT adapter forced.
-  const totalAttempts = MAX_REPAIRS + 2;
-
-  for (let attempt = 0; attempt < totalAttempts; attempt++) {
-    const isEscalation = attempt === totalAttempts - 1;
-    let rungs = ladder(opts.pinnedAdapter); // ROUTE-8: pinned ?? laddered
-    if (isEscalation && firstAdapterId) {
-      rungs = rungs.filter((a) => a.id !== firstAdapterId);
-      if (rungs.length === 0) rungs = ladder(opts.pinnedAdapter); // nothing else available — retry same rung anyway
+  if (loopResult.done) {
+    const revalidated = validateContract(loopResult.output);
+    if (revalidated.valid) {
+      return commit(chatId, loopResult, revalidated.contract, [], opts.projectName);
     }
-
-    const { text: prompt, report } = buildPack(
-      [
-        { name: 'role', content: ROLE_PROMPT },
-        memorySection ? { name: 'project-memory', content: memorySection } : null,
-        { name: 'brief', content: `## Client brief\n\n${brief}` },
-        answeredClarifications
-          ? { name: 'clarifications', content: `## Human answers to prior clarifying questions\n\n${answeredClarifications}` }
-          : null,
-        repairNote ? { name: 'repair', content: repairNote, budget: 2000, policy: 'head' } : null,
-      ].filter(Boolean),
-    );
-
-    await writeArtifact(runId, 'packs/agent1.txt', prompt);
-
-    const { text: raw, adapterId } = await completeWithLadder(prompt, rungs, {
-      runId,
-      phase: 'agent1',
-      cwd,
-    });
-    await writeArtifact(runId, `raw/agent1-attempt-${attempt}.txt`, raw);
-    lastRaw = raw;
-    if (attempt === 0) firstAdapterId = adapterId;
-
-    const parsed = extractJson(raw);
-    const result = parsed
-      ? validateContract(parsed)
-      : {
-          valid: false,
-          contract: null,
-          errors: [{ code: 'SCHEMA_INVALID', detail: 'no parseable JSON found in model output', recoverable: true }],
-        };
-    lastResult = result;
-
-    if (result.valid) {
-      return commitContract(runId, result.contract, [], report, opts.projectName);
-    }
-
-    // Clarify-or-assume boundary: once schema/coverage/orphans all pass and completeness
-    // is the ONLY remaining problem, stop repairing content — ask or accept (CORE-6).
-    if (onlyUnderspecified(result.errors)) {
-      if (mode === 'interactive') {
-        const question = deriveClarifyingQuestion(result.contract, brief);
-        const ask = await askClarification(runId, question, { attempt });
-        if (ask.asked) {
-          await appendLog(runId, 'worklog.jsonl', { ts: Date.now(), phase: 'agent1', event: 'awaiting_human', detail: { itemId: ask.item.id } });
-          return { status: 'awaiting_human', item: ask.item, contract: result.contract };
-        }
-        // round cap already hit — fall through to accept with flagged assumptions
+    // onlyUnderspecified — CORE-6: ask ONE question (interactive) or proceed flagged (batch).
+    if (mode === 'interactive') {
+      const question = deriveClarifyingQuestion(revalidated.contract, brief);
+      const ask = await askClarification(chatId, question, { jobId: loopResult.jobId });
+      if (ask.asked) {
+        await appendChatLog(chatId, 'worklog.jsonl', { ts: Date.now(), phase: 'architect', event: 'awaiting_human', detail: { itemId: ask.item.id } });
+        return { status: 'awaiting_human', item: ask.item, contract: revalidated.contract };
       }
-      return commitContract(
-        runId,
-        result.contract,
-        ['UNDERSPECIFIED: proceeding with every low-confidence assumption flagged'],
-        report,
-        opts.projectName,
-      );
+      // round cap already hit — fall through to accept with flagged assumptions
     }
-
-    if (attempt < totalAttempts - 1) {
-      repairNote = repairFeedback(result.errors);
-      await appendLog(runId, 'worklog.jsonl', { ts: Date.now(), phase: 'agent1', event: 'repair', detail: { attempt, errors: result.errors } });
-      continue;
-    }
+    return commit(chatId, loopResult, revalidated.contract, ['UNDERSPECIFIED: proceeding with every low-confidence assumption flagged'], opts.projectName);
   }
 
   // Exhausted every attempt. P4: if the only remaining errors are droppable
   // (FEATURE_UNCOVERED/ORPHAN_ELEMENT), prune those exact elements and proceed on the
-  // valid subset rather than failing the whole run.
-  const parsedLast = extractJson(lastRaw ?? '');
-  const pruned = parsedLast ? pruneInvalidElements(parsedLast, lastResult.errors) : null;
+  // valid subset rather than failing the whole chat.
+  const pruned = loopResult.output ? pruneInvalidElements(loopResult.output, loopResult.errors) : null;
   if (pruned) {
     const revalidated = validateContract(pruned.contract);
     if (revalidated.valid || onlyUnderspecified(revalidated.errors)) {
-      return commitContract(runId, revalidated.contract ?? pruned.contract, pruned.gaps, { savedTokens: 0 }, opts.projectName);
+      return commit(chatId, loopResult, revalidated.contract ?? pruned.contract, pruned.gaps, opts.projectName);
     }
   }
 
-  await appendLog(runId, 'worklog.jsonl', {
-    ts: Date.now(),
-    phase: 'agent1',
-    event: 'exhausted',
-    detail: { errors: lastResult?.errors ?? [] },
-  });
-  throw new Error(`Agent 1 exhausted all repair attempts: ${(lastResult?.errors ?? []).map((e) => e.code).join(', ')}`);
+  await failJob({ chatId, role: 'architect', jobId: loopResult.jobId, startedAt: loopResult.startedAt, errors: loopResult.errors });
 }
 
-/** Folds every already-answered clarification for this run into one text block. */
-async function previousAnswers(runId) {
-  const inbox = await readLog(runId, 'inbox.jsonl');
+/** Folds every already-answered clarification for this chat into one text block. */
+async function previousAnswers(chatId) {
+  const inbox = await readChatLog(chatId, 'inbox.jsonl');
   const questions = inbox.filter((i) => i.type === 'clarification');
   const answers = new Map(inbox.filter((i) => i.type === 'clarification_answer').map((i) => [i.id, i.answer]));
   const pairs = questions
@@ -160,18 +102,20 @@ function deriveClarifyingQuestion(contract, brief) {
   );
 }
 
-async function commitContract(runId, contract, gaps, packReport, projectName) {
-  const hash = await writeArtifact(runId, 'architecture.json', contract);
-  await writeArtifact(runId, 'openapi.yaml', deriveOpenApi(contract));
-  await writeArtifact(runId, 'schema.mongo.json', deriveMongoSchema(contract));
-  await writeArtifact(runId, 'decisions.md', deriveDecisions(contract, gaps));
-  const savedTokens = packReport?.savedTokens ?? 0;
-  await appendLog(runId, 'worklog.jsonl', {
-    ts: Date.now(),
-    phase: 'agent1',
-    event: 'committed',
-    detail: { hash, gaps, savedTokens },
+async function commit(chatId, loopResult, contract, gaps, projectName) {
+  const result = await commitArtifact({
+    chatId,
+    role: 'architect',
+    jobId: loopResult.jobId,
+    startedAt: loopResult.startedAt,
+    adapterId: loopResult.adapterId,
+    output: contract,
+    gaps,
+    packReport: loopResult.packReport,
   });
-  await recordProjectMemory(projectName ?? null, runId, contract); // CORE-10
-  return { status: 'passed', contract, hash, gaps, savedTokens };
+  await writeChatFile(chatId, 'openapi.yaml', deriveOpenApi(contract));
+  await writeChatFile(chatId, 'schema.mongo.json', deriveMongoSchema(contract));
+  await writeChatFile(chatId, 'decisions.md', deriveDecisions(contract, gaps));
+  await recordProjectMemory(projectName ?? null, chatId, contract); // CORE-10
+  return { status: 'passed', role: 'architect', contract, hash: result.hash, gaps, savedTokens: result.savedTokens };
 }

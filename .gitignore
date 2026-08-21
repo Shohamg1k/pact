@@ -1,7 +1,10 @@
 node_modules/
 .pact/runs/
+.pact/chats/
+.pact/projects/
 .pact/cache/
 .pact/project-memory.json
 .env
 *.log
 dist/
+.claude/scheduled_tasks.lock

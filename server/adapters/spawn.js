@@ -10,7 +10,8 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 
-const DEFAULT_CLI_TIMEOUT_MS = 600_000; // 10 min
+const DEFAULT_CLI_TIMEOUT_MS = 900_000; // 15 min — code-heavy roles (frontend, whole-repo backends)
+// can genuinely take longer than 10 on a single CLI rung with no failover available.
 
 /**
  * @param {import('./registry.js').CliAgentConfig} cfg

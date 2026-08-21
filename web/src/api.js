@@ -1,33 +1,137 @@
-// Thin client over the daemon (PRD §11). This is the contract the UI track builds against —
-// every route here already exists on server/index.js, even where its internals are stubbed.
+// Thin client over the daemon (PRD §11), rewritten against the chat/project-centric
+// route surface (server/index.js) that replaced the old fixed-pipeline /api/runs/*.
 const BASE = '/api';
 
-export async function submitRun(brief, projectName) {
-  const res = await fetch(`${BASE}/runs`, {
+// Some routes 404 with Express's default HTML page, not JSON (e.g. a route that
+// belongs to a different track and isn't wired yet) — fall back to raw text so the UI
+// can show *something* useful instead of swallowing the body. Never hide a failure.
+async function asJson(res) {
+  const text = await res.text();
+  let body = null;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    body = text ? { raw: text.slice(0, 300) } : null;
+  }
+  return { ok: res.ok, status: res.status, body };
+}
+
+async function postJson(path, payload) {
+  const res = await fetch(`${BASE}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ brief, projectName }),
+    body: JSON.stringify(payload),
+  });
+  return asJson(res);
+}
+
+// --- projects ---
+export async function createProject(name) {
+  const res = await fetch(`${BASE}/projects`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+  return res.json();
+}
+export async function listProjects() {
+  const res = await fetch(`${BASE}/projects`);
+  return res.json();
+}
+
+// --- chats ---
+// A chat is created by its first message — CORE-1: the brief, stored byte-verbatim.
+export async function createChat(text, { projectId, mode, pinnedAdapter } = {}) {
+  const res = await fetch(`${BASE}/chats`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, projectId, mode, pinnedAdapter }),
   });
   return res.json();
 }
 
-export async function getRun(runId) {
-  const res = await fetch(`${BASE}/runs/${runId}`);
+export async function listChats() {
+  const res = await fetch(`${BASE}/chats`);
   return res.json();
 }
 
-export function streamRun(runId, onEvent) {
-  const es = new EventSource(`${BASE}/runs/${runId}/stream`);
-  es.addEventListener('phase', (e) => onEvent(JSON.parse(e.data)));
+export async function getChat(chatId) {
+  const res = await fetch(`${BASE}/chats/${chatId}`);
+  return res.json();
+}
+
+export function streamChat(chatId, onEvent, onConnected) {
+  const es = new EventSource(`${BASE}/chats/${chatId}/stream`);
+  if (onConnected) es.addEventListener('connected', () => onConnected());
+  es.addEventListener('role', (e) => onEvent(JSON.parse(e.data)));
   return () => es.close();
 }
 
-export async function getArtifact(runId, name) {
-  const res = await fetch(`${BASE}/runs/${runId}/artifact/${name}`);
+/** Starts (or extends) a batch of agent roles. Returns {ok:false, status:400,
+ * body:{code:'AGENT_SELECTION_INVALID', details:[{role, detail}]}} on an unsatisfiable
+ * selection — the caller shows that, it never silently retries or drops roles. */
+export async function generateRoles(chatId, roles, { mode, pinnedAdapter } = {}) {
+  return postJson(`/chats/${chatId}/generate`, { roles, mode, pinnedAdapter });
+}
+
+// LOCKED (§11): answering the ONE clarifying question resumes the paused role.
+export async function answerClarification(chatId, itemId, answer) {
+  return postJson(`/chats/${chatId}/answer`, { itemId, answer });
+}
+
+export async function getArtifact(chatId, role) {
+  const res = await fetch(`${BASE}/chats/${chatId}/artifact/${role}`);
+  return res.ok ? res.json() : null;
+}
+
+export async function getFile(chatId, name) {
+  const res = await fetch(`${BASE}/chats/${chatId}/file/${name}`);
   return res.ok ? res.text() : null;
 }
 
-export async function getTrace(runId) {
-  const res = await fetch(`${BASE}/runs/${runId}/trace`);
+export async function getJobFile(chatId, jobId, name) {
+  const res = await fetch(`${BASE}/chats/${chatId}/job/${jobId}/${name}`);
+  return res.ok ? res.text() : null;
+}
+
+export async function getTrace(chatId) {
+  const res = await fetch(`${BASE}/chats/${chatId}/trace`);
   return res.json();
+}
+
+// The 7-role graph — static, drives the agent selector's dependency awareness.
+export async function getAgentGraph() {
+  const res = await fetch(`${BASE}/agents`);
+  return res.json();
+}
+export async function getAvailableRoles(chatId) {
+  const res = await fetch(`${BASE}/chats/${chatId}/agents`);
+  return res.json();
+}
+
+// UI-9: adapter registry + availability + real launch command.
+export async function getAdapters() {
+  const res = await fetch(`${BASE}/adapters`);
+  return res.json();
+}
+
+// UI-7: per-provider ledger, cooldowns, reset times.
+export async function getUsage() {
+  const res = await fetch(`${BASE}/usage`);
+  return res.json();
+}
+
+// UI-5: KNOWN GAP — this route belongs to feat/runner-connectors and does not exist yet.
+export async function requestPreview(chatId, { method, path, body }) {
+  return postJson(`/preview/${chatId}/request`, { method, path, body });
+}
+
+// UI-8: Inbox routes (approve/ack) are P1/P2 and not wired server-side yet.
+export async function approveInboxItem(itemId) {
+  const res = await fetch(`${BASE}/inbox/${itemId}/approve`, { method: 'POST' });
+  return asJson(res);
+}
+export async function ackInboxItem(itemId) {
+  const res = await fetch(`${BASE}/inbox/${itemId}/ack`, { method: 'PATCH' });
+  return asJson(res);
 }
