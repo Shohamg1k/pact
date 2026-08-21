@@ -18,8 +18,8 @@ export const BackendModuleSchema = z.object({
 export const BackendManifestSchema = z.object({
   meta: z.object({
     schema: z.literal('backend/v1'),
-    runId: z.string(),
-    contractHash: z.string(), // must equal sha256(architecture.json) byte-for-byte — CORE-4
+    runId: z.string(), // holds the chat id (kept named runId — cross-track shape, see file header)
+    contractHash: z.string(), // must equal sha256(architect's artifact) byte-for-byte — CORE-4
   }),
   modules: z.array(BackendModuleSchema).min(1),
   server_entry: z.string().min(1),

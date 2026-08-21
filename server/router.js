@@ -2,7 +2,7 @@
 // makes ROUTE-2 true: a failover carries the IDENTICAL pack + worklog + partial output and
 // continues — never restarts, never truncates. That guarantee must survive every refactor.
 import { adapters as allAdapters } from './adapters/index.js';
-import { appendLog } from './kernel/store.js';
+import { appendChatLog } from './kernel/chats.js';
 
 export class PactError extends Error {
   constructor(code, detail) {
@@ -87,7 +87,7 @@ export function ladder(pinnedAdapterId) {
  *
  * @param {string} prompt - the full context pack (already assembled by pack.js)
  * @param {Array} rungs - ladder(pinnedId)
- * @param {{runId: string, phase: string, cwd: string}} ctx
+ * @param {{chatId: string, phase: string, cwd: string}} ctx
  */
 export async function completeWithLadder(prompt, rungs, ctx) {
   let currentPrompt = prompt;
@@ -99,7 +99,7 @@ export async function completeWithLadder(prompt, rungs, ctx) {
     try {
       recordCall(a.id);
       const out = await a.complete(currentPrompt, ctx);
-      await appendLog(ctx.runId, 'worklog.jsonl', {
+      await appendChatLog(ctx.chatId, 'worklog.jsonl', {
         ts: Date.now(),
         phase: ctx.phase,
         adapter: a.id,
@@ -109,7 +109,7 @@ export async function completeWithLadder(prompt, rungs, ctx) {
       return { text: out, adapterId: a.id };
     } catch (e) {
       if (isUsageLimitError(e.message) || e.isUsageLimitError) startCooldown(a, 15 * 60_000);
-      await appendLog(ctx.runId, 'worklog.jsonl', {
+      await appendChatLog(ctx.chatId, 'worklog.jsonl', {
         ts: Date.now(),
         phase: ctx.phase,
         adapter: a.id,

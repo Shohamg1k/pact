@@ -26,8 +26,10 @@ export async function runTier1(backend) {
 }
 
 /** Every ID a contract element can legitimately be cited by: features, apis, collections,
- * and business rules (parsed from their "BR-xx: ..." prefix, PRD §8.1 example). */
-function collectContractIds(contract) {
+ * and business rules (parsed from their "BR-xx: ..." prefix, PRD §8.1 example). Exported
+ * so gates/frontend.js and gates/qa.js can reuse the exact same id space rather than
+ * re-deriving it — one shared notion of "a real contract id" across every role. */
+export function collectContractIds(contract) {
   const ids = new Set();
   for (const f of contract.features) ids.add(f.id);
   for (const a of contract.apis) ids.add(a.id);
