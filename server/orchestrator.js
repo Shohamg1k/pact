@@ -98,10 +98,26 @@ async function runBatch(chatId, order, opts) {
     emit(chatId, role, 'running', {});
 
     let result;
-    if (role === 'pm') result = await runner(chatId, chat.brief, runOpts);
-    else if (role === 'architect') result = await runner(chatId, chat.brief, runOpts);
-    else if (role === 'backend') result = await runner(chatId, await getArtifact(chatId, 'architect'), runOpts);
-    else result = await runner(chatId, runOpts); // uiux/frontend/qa/docs read their own upstream artifacts
+    try {
+      if (role === 'pm') result = await runner(chatId, chat.brief, runOpts);
+      else if (role === 'architect') result = await runner(chatId, chat.brief, runOpts);
+      else if (role === 'backend') result = await runner(chatId, await getArtifact(chatId, 'architect'), runOpts);
+      else result = await runner(chatId, runOpts); // uiux/frontend/qa/docs read their own upstream artifacts
+    } catch (e) {
+      // A role that exhausts its repair budget throws by design (engine.js's failJob) —
+      // it has already recorded the failure to worklog.jsonl and job.json by the time it
+      // does. But every OTHER terminal state (passed/awaiting_human) reaches subscribers
+      // as a bus event, and this one didn't: a hard failure left the bus silent, so any
+      // subscriber blocking on a terminal event for this role — the UI's pipeline strip,
+      // or D4's fixtures/index.js waitForRole — would wait forever with no way to tell a
+      // stuck run from one that had already failed. Confirmed live: the fixtures'
+      // happy-path scenario hung indefinitely after a NO_CAPACITY failure (every adapter
+      // briefly out of quota) produced exactly this silent-throw path. Emit 'failed' so a
+      // hard failure is exactly as observable as any other terminal state, then stop the
+      // batch — there is no valid artifact here for a downstream role to read.
+      emit(chatId, role, 'failed', { error: e.message });
+      return;
+    }
 
     if (result.status === 'awaiting_human') {
       emit(chatId, role, 'awaiting_human', { itemId: result.item.id, question: result.item.payload.question });
