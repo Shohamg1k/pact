@@ -4,7 +4,7 @@
 import express from 'express';
 import cors from 'cors';
 import path from 'node:path';
-import { generateRoles, subscribe, resumeAfterAnswer, SelectionError, getPreview } from './orchestrator.js';
+import { generateRoles, subscribe, resumeAfterAnswer, SelectionError, getPreview, startPreviewForChat } from './orchestrator.js';
 import {
   getChat,
   listChats,
@@ -27,6 +27,7 @@ import { exportPostman } from './connectors/postman.js';
 import { exportGithubPR } from './connectors/github.js';
 import { exportMiro } from './connectors/miro.js';
 import { exportSlack } from './connectors/slack.js';
+import { buildFrontendBundle, previewDocument } from './preview/frontend.js';
 
 const app = express();
 app.use(cors());
@@ -79,7 +80,15 @@ app.get('/api/chats/:id', async (req, res) => {
   if (!chat) return res.status(404).json({ code: 'NOT_FOUND' });
   const artifacts = await listArtifacts(req.params.id);
   const summary = Object.fromEntries(Object.entries(artifacts).map(([role, a]) => [role, { gaps: a.gaps ?? [] }]));
-  res.json({ chat, artifacts: summary, jobs: await listJobs(req.params.id) });
+  // `preview` tells the workbench whether the generated backend is actually live, so the
+  // API console and Live Preview tab can say so instead of failing opaquely.
+  const preview = getPreview(req.params.id);
+  res.json({
+    chat,
+    artifacts: summary,
+    jobs: await listJobs(req.params.id),
+    preview: preview ? { live: true, baseUrl: preview.baseUrl } : { live: false },
+  });
 });
 
 // SSE: {role, status, detail, ts} per agent job — PRD §11, §21 integration contract.
@@ -174,6 +183,50 @@ app.post('/api/chats/:id/preview/request', async (req, res) => {
     res.json(result);
   } catch (e) {
     res.status(502).json({ code: 'PREVIEW_UNREACHABLE', detail: e.message });
+  }
+});
+
+// Start the persistent preview for a chat whose backend committed in an earlier daemon
+// lifetime — previews die with the process, so this is how you get yesterday's chat live
+// again without paying for a model call to regenerate an identical manifest.
+app.post('/api/chats/:id/preview/start', async (req, res) => {
+  if (getPreview(req.params.id)) return res.json({ live: true, baseUrl: getPreview(req.params.id).baseUrl });
+  try {
+    await startPreviewForChat(req.params.id);
+    const preview = getPreview(req.params.id);
+    res.json(preview ? { live: true, baseUrl: preview.baseUrl } : { live: false, error: 'preview failed to start' });
+  } catch (e) {
+    res.status(400).json({ live: false, error: e.message });
+  }
+});
+
+// The Frontend agent's manifest, bundled and served as a real page for the workbench's
+// Live Preview tab. Three routes: the document, its status (so the tab can report a
+// bundle failure as UI instead of a blank iframe), and the same-origin API bridge the
+// injected fetch shim routes the app's own calls through.
+app.get('/api/chats/:id/frontend-preview/status', async (req, res) => {
+  const built = await buildFrontendBundle(req.params.id);
+  res.json({ ok: !built.error, error: built.error ?? null });
+});
+
+app.get('/api/chats/:id/frontend-preview', async (req, res) => {
+  const built = await buildFrontendBundle(req.params.id);
+  // Same-origin so the shim can reach the proxy below; framed only by our own workbench.
+  res.set('Content-Security-Policy', "frame-ancestors 'self'");
+  res.type('html').send(previewDocument(req.params.id, built.js, built.error));
+});
+
+app.all('/api/chats/:id/frontend-preview/proxy/*urlPath', async (req, res) => {
+  const preview = getPreview(req.params.id);
+  if (!preview) {
+    return res.status(503).json({ error: 'NO_BACKEND', message: 'No backend is running for this chat yet.' });
+  }
+  const urlPath = '/' + [].concat(req.params.urlPath).join('/');
+  try {
+    const result = await preview.proxy(req.method, urlPath, req.body);
+    res.status(result.status ?? 502).json(result.body ?? result);
+  } catch (e) {
+    res.status(502).json({ error: 'PREVIEW_UNREACHABLE', message: e.message });
   }
 });
 

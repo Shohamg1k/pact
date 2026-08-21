@@ -125,6 +125,19 @@ async function runBatch(chatId, order, opts) {
   await patchChat(chatId, { pendingRole: null, pendingOrder: null });
 }
 
+/**
+ * Boot the persistent preview for a chat whose backend already committed — a preview
+ * lives only as long as the daemon process, so reopening yesterday's chat finds no
+ * running server even though the manifest on disk is perfectly good. Without this the
+ * only way back to a live app is regenerating the Backend agent, which costs a model
+ * call to reproduce something already on disk.
+ */
+export async function startPreviewForChat(chatId) {
+  const manifest = await getArtifact(chatId, 'backend');
+  if (!manifest) throw new Error('this chat has no backend manifest to boot');
+  return bootPreview(chatId, await getArtifact(chatId, 'architect'), manifest);
+}
+
 async function bootPreview(chatId, contract, manifest) {
   emit(chatId, 'preview', 'running', {});
   await stopPreview(chatId); // a re-run 'backend' must not leak the previous preview's node/mongod pair

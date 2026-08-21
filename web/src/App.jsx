@@ -1,11 +1,6 @@
 import React from 'react';
-import { RouterProvider } from './lib/router.jsx';
-import AppShell from './shell/AppShell.jsx';
+import Workbench from './shell/Workbench.jsx';
 
 export default function App() {
-  return (
-    <RouterProvider>
-      <AppShell />
-    </RouterProvider>
-  );
+  return <Workbench />;
 }

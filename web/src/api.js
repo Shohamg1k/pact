@@ -121,17 +121,26 @@ export async function getUsage() {
   return res.json();
 }
 
-// VER-3/UI-5: boot the backend manifest (write tree, npm install, in-memory Mongo, spawn
-// the generated server) and proxy real requests to it, once booted.
-export async function bootChat(chatId) {
-  return postJson(`/chats/${chatId}/boot`, {});
-}
-export async function getBootStatus(chatId) {
-  const res = await fetch(`${BASE}/chats/${chatId}/boot`);
-  return res.json();
-}
+// VER-3/UI-5: the backend preview. orchestrator.js boots one automatically as soon as
+// the Backend agent commits, so there is no client-side "boot" call — GET /chats/:id
+// reports `preview` when one is live, and this proxies a real request to it.
 export async function requestPreview(chatId, { method, path, body }) {
-  return postJson(`/preview/${chatId}/request`, { method, path, body });
+  return postJson(`/chats/${chatId}/preview/request`, { method, path, body });
+}
+
+/** Bring a previously-generated backend back up — previews live only as long as the
+ * daemon process, so reopening an older chat needs this rather than a regeneration. */
+export async function startPreview(chatId) {
+  return postJson(`/chats/${chatId}/preview/start`, {});
+}
+
+// The Frontend agent's manifest, bundled by the daemon and framed in the Live Preview tab.
+export function frontendPreviewUrl(chatId) {
+  return `${BASE}/chats/${chatId}/frontend-preview`;
+}
+export async function getFrontendPreviewStatus(chatId) {
+  const res = await fetch(`${BASE}/chats/${chatId}/frontend-preview/status`);
+  return res.json();
 }
 
 // UI-8: Inbox routes (approve/ack) are P1/P2 and not wired server-side yet.

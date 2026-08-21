@@ -2,16 +2,10 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "pact-server",
-      "runtimeExecutable": "node",
-      "runtimeArgs": ["server/index.js"],
-      "port": 4300
-    },
-    {
       "name": "pact-web",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "-w", "web"],
-      "port": 5173
+      "port": 5174
     }
   ]
 }
