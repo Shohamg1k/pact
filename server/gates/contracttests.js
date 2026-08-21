@@ -19,10 +19,19 @@
 
 const RULE_CODE_RE = /^(\d{3})\b\s*(.*)$/;
 
-/** Fills `:param` path segments with a placeholder — a fresh in-memory DB has no real ids,
- * so any syntactically valid placeholder exercises the same "not found"/guard code path. */
+/** Fills a path param segment with a placeholder — a fresh in-memory DB has no real ids,
+ * so any syntactically valid placeholder exercises the same "not found"/guard code path.
+ * Covers every param syntax a contract's declared stack might use: Express `:id`,
+ * OpenAPI/FastAPI `{id}`, Django converters `<int:pk>` / `<slug:name>` / bare `<id>`.
+ * This stayed `:param`-only (Node/Express) until a live FastAPI run showed the architect
+ * writing `/books/{book_id}` — the same live-run finding that motivated runner.js's
+ * fillPathParams; a parameterized FastAPI/Django test would otherwise have run against a
+ * literal, un-filled `{book_id}` segment. */
 function fillPath(p) {
-  return p.replace(/:([A-Za-z_][A-Za-z0-9_]*)/g, '000000000000000000000001');
+  return p
+    .replace(/:([A-Za-z_][A-Za-z0-9_]*)/g, '000000000000000000000001')
+    .replace(/\{[A-Za-z_][A-Za-z0-9_]*\}/g, '000000000000000000000001')
+    .replace(/<(?:[A-Za-z_]+:)?[A-Za-z_][A-Za-z0-9_]*>/g, '000000000000000000000001');
 }
 
 function parseRuleCode(rule) {

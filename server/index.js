@@ -101,11 +101,17 @@ app.get('/api/chats/:id', async (req, res) => {
   // `preview` tells the workbench whether the generated backend is actually live, so the
   // API console and Live Preview tab can say so instead of failing opaquely.
   const preview = getPreview(req.params.id);
+  // VER-4: contracttests.json is written once by orchestrator.js right after the preview
+  // boots (reporting, not blocking — §28 Q2); only the pass/fail counts belong on this
+  // summary route, the full per-test results live at GET .../contracttests below.
+  const contractTestsRaw = await readChatFile(req.params.id, 'contracttests.json');
+  const contractTests = contractTestsRaw ? JSON.parse(contractTestsRaw) : null;
   res.json({
     chat,
     artifacts: summary,
     jobs: await listJobs(req.params.id),
     preview: preview ? { live: true, baseUrl: preview.baseUrl } : { live: false },
+    contractTests: contractTests ? { total: contractTests.total, passed: contractTests.passed, failed: contractTests.failed } : null,
   });
 });
 
@@ -171,6 +177,17 @@ app.get('/api/chats/:id/job/:jobId/*name', async (req, res) => {
 app.get('/api/chats/:id/trace', async (req, res) => {
   const trace = await readChatFile(req.params.id, 'trace.json');
   res.json(trace ? JSON.parse(trace) : { rows: [], reverse: {}, gaps: [] });
+});
+
+// VER-4 (PRD §16, §24 T9): the full generated-contract-tests report — one row per test,
+// derived deterministically from openapi.yaml and run against the booted preview server
+// by gates/contracttests.js. 404 before the backend's preview has ever booted once (the
+// same "not written yet" convention as /artifact/:role and /trace), not a bare `null`, so
+// the UI can tell "no report yet" apart from "the report says 0 tests".
+app.get('/api/chats/:id/contracttests', async (req, res) => {
+  const raw = await readChatFile(req.params.id, 'contracttests.json');
+  if (raw === null) return res.status(404).json({ code: 'NOT_FOUND', detail: 'no contract-test report yet — the backend preview has not booted' });
+  res.type('application/json').send(raw);
 });
 
 // The 7-role graph + which are currently satisfiable for this chat — drives the UI's

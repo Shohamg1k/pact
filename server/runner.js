@@ -82,6 +82,29 @@ export function injectPortEnv(code) {
   return code.replace(/\.listen\(\s*(\d+)/, '.listen(process.env.PACT_RUNNER_PORT || $1');
 }
 
+/** Inserts a FastAPI `GET /__health` right after `app = FastAPI(...)`. Idempotent; a
+ * no-op when the construction can't be found safely (boot check will then surface
+ * BOOT_FAIL naming this file, same fallback contract as injectHealthRoute above). */
+export function injectFastApiHealthRoute(code) {
+  if (code.includes(HEALTH_ROUTE)) return code;
+  const m = code.match(/(\b(\w+)\s*=\s*FastAPI\([^)]*\)\s*)/);
+  if (!m) return code;
+  const [full, decl, varName] = m;
+  const injected = `${decl}\n\n@${varName}.get("${HEALTH_ROUTE}")\ndef __pact_health():\n    return {"ok": True}\n`;
+  return code.replace(full, injected);
+}
+
+/** Inserts a Django `path('__health', ...)` into whichever module declares
+ * `urlpatterns = [...]` — that is the root urlconf in every generated tree PACT produces
+ * (a single small app, per stacks.js's Django promptRules), so the first match is the
+ * right one. Idempotent. */
+export function injectDjangoHealthRoute(code) {
+  if (!/urlpatterns\s*=\s*\[/.test(code) || code.includes(HEALTH_ROUTE)) return code;
+  let out = code;
+  if (!/JsonResponse/.test(out)) out = `from django.http import JsonResponse\n${out}`;
+  return out.replace(/urlpatterns\s*=\s*\[/, `urlpatterns = [\n    path('${HEALTH_ROUTE.slice(1)}', lambda request: JsonResponse({'ok': True})),`);
+}
+
 /** Rewrites a hardcoded `mongoose.connect('...'` literal to prefer the injected env var.
  * prompts/backend.md mandates MONGO_URL, but older artifacts (and models that ignore the
  * rule) emit MONGO_URI or a bare literal — startPreviewServer sets every spelling, and this
@@ -102,6 +125,20 @@ export function identifyFailingFile(text, manifest) {
 
 // --- probe target selection -----------------------------------------------------------
 
+/** Fills every path-param placeholder with a requestable literal, across the param
+ * syntaxes different stacks' contracts actually use: Express `:id`, OpenAPI/FastAPI
+ * `{id}`, and Django converters `<int:pk>` / `<slug:name>` / bare `<id>`. Contracts were
+ * only ever tested against `:id` (Node); FastAPI/Django contracts declare their paths in
+ * the framework's own native syntax (verified live: the architect wrote `/books/{book_id}`
+ * for a FastAPI brief), so an unhandled syntax left the literal placeholder in the URL and
+ * the probe 404'd against a path that was never actually requestable. */
+export function fillPathParams(p) {
+  return p
+    .replace(/:([A-Za-z_][A-Za-z0-9_]*)/g, '1')
+    .replace(/\{[A-Za-z_][A-Za-z0-9_]*\}/g, '1')
+    .replace(/<(?:[A-Za-z_]+:)?[A-Za-z_][A-Za-z0-9_]*>/g, '1');
+}
+
 /** Picks one declared API to hit live after boot (VER-3's "probe one declared endpoint").
  * Prefers GET (no side effects) and fills path params with a placeholder so `/x/:id`
  * becomes a requestable `/x/1`. */
@@ -109,8 +146,7 @@ export function pickProbeEndpoint(contract) {
   const apis = contract?.apis ?? [];
   if (apis.length === 0) return null;
   const candidate = apis.find((a) => a.method === 'GET') ?? apis[0];
-  const reqPath = candidate.path.replace(/:([A-Za-z_][A-Za-z0-9_]*)/g, '1');
-  return { method: candidate.method, path: reqPath, id: candidate.id };
+  return { method: candidate.method, path: fillPathParams(candidate.path), id: candidate.id };
 }
 
 // --- filesystem: write the generated tree -----------------------------------------------
@@ -131,6 +167,11 @@ export async function writeGeneratedTree(generatedDir, manifest, stack = resolve
   }
 
   const format = detectModuleFormat(manifest);
+  // Django's urlconf can live in any module (it's whichever one declares `urlpatterns`,
+  // not necessarily server_entry — manage.py never is), so injection there is keyed off
+  // content, not path; guard against injecting into more than one file if a generated
+  // tree ever declares more than one urlpatterns list.
+  let djangoHealthInjected = false;
   for (const m of manifest.modules) {
     const filePath = path.join(generatedDir, m.path);
     await mkdir(path.dirname(filePath), { recursive: true });
@@ -141,6 +182,12 @@ export async function writeGeneratedTree(generatedDir, manifest, stack = resolve
         code = injectPortEnv(code);
       }
       code = injectMongoUri(code);
+    } else if (stack.id === 'python' && m.path === manifest.server_entry) {
+      code = injectFastApiHealthRoute(code);
+    } else if (stack.id === 'django' && !djangoHealthInjected) {
+      const injected = injectDjangoHealthRoute(code);
+      if (injected !== code) djangoHealthInjected = true;
+      code = injected;
     }
     await writeFile(filePath, code, 'utf8');
   }

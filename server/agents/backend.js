@@ -10,6 +10,7 @@ import { BackendManifestSchema } from '../schemas/backend.js';
 import { runGateV2, repairFeedbackV2, pruneInvalidModules } from '../gates/v2.js';
 import { runBootCheck } from '../runner.js';
 import { readChatFile, chatDir } from '../kernel/chats.js';
+import { resolveStack } from '../stacks.js';
 
 const ROLE_PROMPT = await readFile(new URL('../prompts/backend.md', import.meta.url), 'utf8');
 
