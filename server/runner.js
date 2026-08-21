@@ -294,9 +294,21 @@ export async function installDeps(generatedDir, opts = {}) {
   const depsHash = sha256(pkgRaw);
   const markerPath = path.join(generatedDir, '.pact-deps-hash');
   const prevHash = await readFile(markerPath, 'utf8').catch(() => null);
-  // node_modules is Node's marker; other stacks install into the interpreter, so the
-  // hash alone decides whether a reinstall is needed.
-  const alreadyInstalled = stack.id === 'node' ? existsSync(path.join(generatedDir, 'node_modules')) : true;
+  // node_modules is a real, local, physically-checkable marker: if it exists AND the hash
+  // matches, the deps are actually there. Every other stack here installs into the shared
+  // interpreter (global/user site-packages), which this process cannot cheaply verify the
+  // same way — "the hash matches a prior recorded success" is a much weaker claim than
+  // "the directory exists", and live evidence proved the gap: a Django boot-check reused
+  // this exact directory across two different backend jobs, the marker from the FIRST
+  // job's successful install matched the SECOND job's unchanged requirements.txt, install
+  // was skipped on that basis, and manage.py then failed with `ModuleNotFoundError: No
+  // module named 'django'` even though a manual `py -m pip install` in that exact
+  // directory immediately afterward succeeded and imported fine — nothing was actually
+  // missing from the interpreter that a real install call wouldn't have caught skipping.
+  // Non-Node stacks therefore never skip: pip re-running against an already-satisfied
+  // requirements.txt is itself fast (pip's own resolver no-ops satisfied packages), so the
+  // cost of always running it is small next to the cost of a false skip.
+  const alreadyInstalled = stack.id === 'node' && existsSync(path.join(generatedDir, 'node_modules'));
   if (prevHash === depsHash && alreadyInstalled) {
     return { skipped: true, stdout: '', stderr: '' };
   }

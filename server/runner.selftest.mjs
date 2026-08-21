@@ -1,7 +1,7 @@
 import assert from 'node:assert';
 import os from 'node:os';
 import path from 'node:path';
-import { rm } from 'node:fs/promises';
+import { rm, mkdir, writeFile } from 'node:fs/promises';
 import {
   detectModuleFormat,
   injectHealthRoute,
@@ -9,10 +9,13 @@ import {
   injectMongoUri,
   identifyFailingFile,
   pickProbeEndpoint,
+  fillPathParams,
   writeGeneratedTree,
   installDeps,
   runBootCheck,
 } from './runner.js';
+import { resolveStack } from './stacks.js';
+import { sha256 } from './kernel/store.js';
 
 // --- pure-function checks (no I/O) --------------------------------------------------------
 
@@ -55,6 +58,13 @@ const contract = { apis: [{ id: 'API-01', method: 'POST', path: '/bookings' }, {
 const probe = pickProbeEndpoint(contract);
 assert.strictEqual(probe.method, 'GET', 'should prefer a GET endpoint to avoid side effects');
 assert.strictEqual(probe.path, '/bookings/1', 'should fill path params with a placeholder');
+
+// fillPathParams: regression for a live FastAPI run where the architect wrote
+// `/books/{book_id}` (OpenAPI/FastAPI's own syntax) — the probe left the literal `{book_id}`
+// in the URL and got a 422 instead of the declared 404 until this covered `{id}` too.
+assert.strictEqual(fillPathParams('/books/{book_id}'), '/books/1', 'should fill OpenAPI/FastAPI {param} placeholders');
+assert.strictEqual(fillPathParams('/projects/<int:project_id>/tasks'), '/projects/1/tasks', 'should fill Django <type:name> converters');
+assert.strictEqual(fillPathParams('/x/:id/y/{z}/<w>'), '/x/1/y/1/1', 'should fill a mix of all three param syntaxes');
 
 console.log('runner.selftest.mjs — pure-function checks passed');
 
@@ -124,6 +134,32 @@ try {
   console.log('runner.selftest.mjs — broken entry correctly reported as BOOT_FAIL, no hang');
 } finally {
   await rm(generatedDir, { recursive: true, force: true }).catch(() => {});
+}
+
+// Regression: a stale-but-hash-matching `.pact-deps-hash` marker must NOT skip install for
+// a non-Node stack. Live evidence: chat 39b42410's Django boot-check directory is reused
+// across backend jobs (agents/backend.js always points at the same `<chat>/boot-check`
+// path); an EARLIER job's successful install left a marker whose hash matched a LATER
+// job's unchanged requirements.txt, install was skipped on that basis, and `manage.py
+// migrate` failed with `ModuleNotFoundError: No module named 'django'` even though a
+// manual `py -m pip install` in that exact directory succeeded immediately afterward —
+// nothing was actually missing that a real install call wouldn't have caught. Node's
+// node_modules existence check is a real, per-directory, physically-verifiable marker;
+// nothing analogous exists for a shared interpreter, so non-Node stacks must always run
+// the (idempotent, fast-when-satisfied) install rather than trust a hash alone.
+const pyDir = path.join(os.tmpdir(), `pact-runner-selftest-py-${Date.now()}`);
+try {
+  await mkdir(pyDir, { recursive: true });
+  const reqContent = 'pip\n'; // always-satisfied — this checks the SKIP decision, not pip itself
+  await writeFile(path.join(pyDir, 'requirements.txt'), reqContent, 'utf8');
+  // Plant a marker as if some earlier, unrelated job already "succeeded" in this directory.
+  await writeFile(path.join(pyDir, '.pact-deps-hash'), sha256(reqContent), 'utf8');
+  const pyStack = resolveStack({ stack: { default: 'python', db: 'sqlite', api: 'fastapi' } });
+  const pyInstall = await installDeps(pyDir, { timeoutMs: 60_000, stack: pyStack });
+  assert.strictEqual(pyInstall.skipped, false, 'a matching hash marker must not skip install for a non-Node stack');
+  console.log('runner.selftest.mjs — non-Node stacks never trust a stale deps-hash marker');
+} finally {
+  await rm(pyDir, { recursive: true, force: true }).catch(() => {});
 }
 
 console.log('runner.selftest.mjs — all checks passed');
