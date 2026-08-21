@@ -1,0 +1,184 @@
+// Gate V2 — coverage, drift, conformance (PRD §16 VER-2, §8.5). Deterministic, all plain
+// code; imports no model client (PRD §2 non-negotiable #1). Tier 1 (syntax, gates/verify.js)
+// runs first — cheapest before expensive (P6) — and if code doesn't even parse there is no
+// point computing coverage/drift over it.
+import { verifyArtifacts, repairFeedback as tier1RepairFeedback } from './verify.js';
+
+/** Every module + package.json as a checkable file list for gates/verify.js. */
+function moduleFiles(backend) {
+  return [
+    ...backend.modules.map((m) => ({ path: m.path, content: m.code })),
+    { path: 'package.json', content: JSON.stringify(backend.package_json, null, 2) },
+  ];
+}
+
+/** Tier 1 — syntax. */
+export async function runTier1(backend) {
+  const result = await verifyArtifacts(moduleFiles(backend));
+  if (result.ok) return { valid: true, errors: [] };
+  const errors = result.issues.map((i) => ({
+    code: 'TIER1_PARSE_FAIL',
+    subject_id: i.file,
+    detail: i.line ? `${i.file}:${i.line}${i.column != null ? `:${i.column}` : ''} — ${i.message}` : `${i.file} — ${i.message}`,
+    recoverable: true,
+  }));
+  return { valid: false, errors, verifyResult: result };
+}
+
+/** Every ID a contract element can legitimately be cited by: features, apis, collections,
+ * and business rules (parsed from their "BR-xx: ..." prefix, PRD §8.1 example). */
+function collectContractIds(contract) {
+  const ids = new Set();
+  for (const f of contract.features) ids.add(f.id);
+  for (const a of contract.apis) ids.add(a.id);
+  for (const c of contract.collections ?? []) ids.add(c.id);
+  for (const r of contract.business_rules ?? []) {
+    const m = r.match(/^([A-Za-z]+-\d+)/);
+    if (m) ids.add(m[1]);
+  }
+  return ids;
+}
+
+/** Drift (PRD §8.5, VER-2): every module cites >=1 real contract ID. Empty or unknown =
+ * DRIFT_REJECTED, rejected by name — the mirror image of Gate V1 pass 3 (ORPHAN_ELEMENT). */
+export function checkDrift(contract, backend) {
+  const validIds = collectContractIds(contract);
+  const errors = [];
+  for (const m of backend.modules) {
+    const impl = m.implements ?? [];
+    if (impl.length === 0) {
+      errors.push({
+        code: 'DRIFT_REJECTED',
+        subject_id: m.path,
+        detail: `${m.path} has an empty implements[] — it cites nothing in the contract`,
+        recoverable: true,
+      });
+      continue;
+    }
+    for (const id of impl) {
+      if (!validIds.has(id)) {
+        errors.push({
+          code: 'DRIFT_REJECTED',
+          subject_id: m.path,
+          detail: `${m.path} cites unknown contract id "${id}" — not a real feature/api/collection/business-rule id`,
+          recoverable: true,
+        });
+      }
+    }
+  }
+  return errors;
+}
+
+/** Extracts `router.<method>('<path>')` registrations from every route-kind module. */
+export function extractRoutes(modules) {
+  const re = /router\.(get|post|put|patch|delete)\(\s*['"`]([^'"`]+)['"`]/gi;
+  const routes = [];
+  for (const m of modules) {
+    if (m.kind !== 'route') continue;
+    let match;
+    re.lastIndex = 0;
+    while ((match = re.exec(m.code))) {
+      routes.push({ method: match[1].toUpperCase(), path: match[2], file: m.path });
+    }
+  }
+  return routes;
+}
+
+/** Conformance (VER-2): the router.<method>('<path>') set extracted from code, diffed
+ * against the contract's declared APIs. This also IS the API coverage check — a contract
+ * API with no matching route in code is definitionally an uncovered feature. */
+export function checkConformance(contract, backend) {
+  const codeRoutes = extractRoutes(backend.modules);
+  const codeSet = new Set(codeRoutes.map((r) => `${r.method} ${r.path}`));
+  const contractSet = new Set(contract.apis.map((a) => `${a.method} ${a.path}`));
+  const errors = [];
+  for (const a of contract.apis) {
+    const key = `${a.method} ${a.path}`;
+    if (!codeSet.has(key)) {
+      errors.push({
+        code: 'CONFORMANCE_MISMATCH',
+        subject_id: a.id,
+        detail: `declared ${key} (${a.id}) has no matching router.${a.method.toLowerCase()}('${a.path}') in the generated code`,
+        recoverable: true,
+      });
+    }
+  }
+  for (const r of codeRoutes) {
+    const key = `${r.method} ${r.path}`;
+    if (!contractSet.has(key)) {
+      errors.push({
+        code: 'CONFORMANCE_MISMATCH',
+        subject_id: r.file,
+        detail: `generated route ${key} in ${r.file} is not declared in the contract's apis[]`,
+        recoverable: true,
+      });
+    }
+  }
+  return errors;
+}
+
+/** Collection coverage (VER-2): every collection is modelled by >=1 module. */
+export function checkCollectionCoverage(contract, backend) {
+  const implemented = new Set(backend.modules.flatMap((m) => m.implements ?? []));
+  const errors = [];
+  for (const c of contract.collections ?? []) {
+    if (!implemented.has(c.id)) {
+      errors.push({
+        code: 'CONFORMANCE_MISMATCH',
+        subject_id: c.id,
+        detail: `collection ${c.id} (${c.name}) has no module citing it — not modelled`,
+        recoverable: true,
+      });
+    }
+  }
+  return errors;
+}
+
+/** Tier 2 — structural: coverage + drift + conformance, all deterministic, no model call. */
+export function runTier2(contract, backend) {
+  const errors = [...checkDrift(contract, backend), ...checkConformance(contract, backend), ...checkCollectionCoverage(contract, backend)];
+  return { valid: errors.length === 0, errors };
+}
+
+/** Runs Gate V2 tiers 1 then 2, cheapest first (P6). Tier 3 (npm install / boot) is
+ * runner.js's job on feat/runner-connectors, not this gate. */
+export async function runGateV2(contract, backend) {
+  const t1 = await runTier1(backend);
+  if (!t1.valid) return { valid: false, errors: t1.errors, tier: 1 };
+  const t2 = runTier2(contract, backend);
+  return { valid: t2.valid, errors: t2.errors, tier: t2.valid ? 0 : 2 };
+}
+
+/** Builds the targeted repair prompt fragment quoting the exact Gate V2 errors. */
+export function repairFeedbackV2(errors) {
+  if (errors.length && errors[0].code === 'TIER1_PARSE_FAIL') {
+    return tier1RepairFeedback({
+      ok: false,
+      checked: errors.length,
+      issues: errors.map((e) => ({ file: e.subject_id, message: e.detail })),
+    });
+  }
+  const lines = errors.map((e) => `- [${e.code}] ${e.subject_id ?? ''}: ${e.detail}`);
+  return (
+    'Gate V2 REJECTED the previous output with these EXACT errors. Fix only these issues; ' +
+    'do not otherwise change working modules. DRIFT_REJECTED files must either cite a real ' +
+    'contract id or be removed and filed as a gap instead of writing invented code:\n' +
+    lines.join('\n')
+  );
+}
+
+/**
+ * P4 (graceful partial output): when repairs are exhausted, drop exactly the modules named
+ * by DRIFT_REJECTED / TIER1_PARSE_FAIL errors and proceed with the valid subset (CORE-7).
+ * Coverage/conformance gaps that remain can't be fixed by dropping anything — those are
+ * reported as gaps by the caller instead. Never used when nothing would survive pruning.
+ * @returns {{backend: object, gaps: string[]}|null}
+ */
+export function pruneInvalidModules(backend, errors) {
+  const dropPaths = new Set(errors.filter((e) => e.code === 'DRIFT_REJECTED' || e.code === 'TIER1_PARSE_FAIL').map((e) => e.subject_id));
+  if (dropPaths.size === 0) return null;
+  const modules = backend.modules.filter((m) => !dropPaths.has(m.path));
+  if (modules.length === 0) return null; // nothing survives — no safe valid subset to build
+  const gaps = errors.filter((e) => dropPaths.has(e.subject_id)).map((e) => `${e.code}: ${e.detail} (dropped, BLOCKED_ON_UPSTREAM)`);
+  return { backend: { ...backend, modules }, gaps };
+}
