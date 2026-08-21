@@ -57,6 +57,18 @@ after you respond, so don't spend effort computing them. Do get `meta.schema` ri
    collections, `mongoose`).
 8. **Stack comes from `stack.default`/`stack.db`/`stack.api`** in the contract — build to
    what it says, not a hardcoded assumption.
+9. **The runtime environment contract is fixed — read it exactly, don't invent your own:**
+   - The HTTP port comes from `process.env.PORT` (numeric). Never hardcode a port.
+   - The MongoDB connection string comes from `process.env.MONGO_URL` — this EXACT
+     variable name, nothing else (not `MONGO_URI`, not `DATABASE_URL`, not a config
+     file). It will always be set by the process that starts you; do not add a
+     fallback to a hardcoded local host/port (e.g. `127.0.0.1:27017`) — if `MONGO_URL`
+     is ever unset that's a real startup error, not something to paper over with a
+     guessed default that will silently hang trying to reach a database that doesn't
+     exist.
+   - `mongoose.connect()` must be awaited before the server starts listening, and any
+     connection failure must reject/throw rather than hang — the process that starts
+     you is watching for the port to open as its readiness signal.
 
 If you are given GATE V2 ERRORS below, fix ONLY those exact issues — do not restructure
 modules that weren't flagged, and do not touch `implements[]` entries that were not named.

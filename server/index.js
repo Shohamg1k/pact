@@ -20,6 +20,7 @@ import { adapters, probeAll } from './adapters/index.js';
 import { launchCommandFor } from './adapters/registry.js';
 import { usageSnapshot } from './router.js';
 import { ROLE_IDS, ROLE_LABELS, ROLE_GRAPH } from './agents/registry.js';
+import { bootChat, getBoot, stopBoot, stopAllBoots, proxyRequest } from './runner.js';
 
 const app = express();
 app.use(cors());
@@ -168,6 +169,27 @@ app.get('/api/adapters', (_req, res) => {
 
 app.get('/api/usage', (_req, res) => res.json({ providers: usageSnapshot() }));
 
+// VER-3 / UI-5: write the backend manifest to disk, npm install, boot an in-memory
+// Mongo + the generated server as an isolated child process. Async — POST returns
+// immediately with {status:'booting'}, the client polls GET for {status,port,error}.
+app.post('/api/chats/:id/boot', async (req, res) => {
+  const record = await bootChat(req.params.id);
+  res.json(record);
+});
+app.get('/api/chats/:id/boot', async (req, res) => res.json(getBoot(req.params.id)));
+app.post('/api/chats/:id/boot/stop', async (req, res) => {
+  await stopBoot(req.params.id);
+  res.json({ ok: true });
+});
+
+// UI-5: PreviewConsole — a real HTTP round trip against the booted server.
+app.post('/api/preview/:id/request', async (req, res) => {
+  const { method, path: reqPath, body } = req.body ?? {};
+  if (!method || !reqPath) return res.status(400).json({ code: 'INVALID_REQUEST' });
+  const result = await proxyRequest(req.params.id, { method, path: reqPath, body });
+  res.json(result);
+});
+
 const PORT = process.env.PACT_PORT || 4300;
 probeAll()
   .then(() => {
@@ -176,3 +198,12 @@ probeAll()
   })
   .catch(() => {});
 app.listen(PORT, () => console.log(`[pact] daemon listening on http://127.0.0.1:${PORT}`));
+
+// SEC-2/P5: never leave a booted generated server or its in-memory Mongo orphaned when
+// the daemon exits.
+for (const sig of ['SIGINT', 'SIGTERM']) {
+  process.on(sig, async () => {
+    await stopAllBoots();
+    process.exit(0);
+  });
+}
