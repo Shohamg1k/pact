@@ -903,3 +903,23 @@ table.grid tr:hover td, table.trace-table tr:hover td { background: var(--hover)
 .kv { display: flex; gap: 8px; font-size: 12px; margin-bottom: 2px; }
 .kv-k { color: var(--text-faint); min-width: 78px; }
 .kv-v { color: var(--text-dim); font-family: var(--mono); font-size: 11px; word-break: break-all; }
+
+/* Multi-view roles (Backend: Service map/Source/API console, Frontend: Live preview/
+   Source) — reachable via an expand chevron, since a role's job-row single-click only
+   opens its default view. */
+.job-row-wrap { display: flex; align-items: stretch; }
+.job-row-wrap .job-row { flex: 1; min-width: 0; }
+.job-expand {
+  width: 20px; flex-shrink: 0; display: grid; place-items: center;
+  color: var(--text-faint); border-radius: 5px;
+}
+.job-expand:hover { background: var(--hover); color: var(--text); }
+.job-expand .twisty { font-size: 8px; transition: transform 0.12s; }
+.job-expand.open .twisty { transform: rotate(90deg); }
+.view-list { padding-bottom: 2px; }
+.view-row {
+  display: block; width: 100%; text-align: left;
+  padding: 3px 10px 3px 46px; font-size: 12px; color: var(--text-dim);
+  border-radius: 5px;
+}
+.view-row:hover { background: var(--hover); color: var(--text); }

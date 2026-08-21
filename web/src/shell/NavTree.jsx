@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { ROLE_ICON, IconAgents, IconInbox, IconSettings, IconPlus, IconCheck } from './icons.jsx';
+import { ROLE_VIEWS } from './roleViews.js';
 
 // Projects → chats → agent runs, as one nested tree. A selected chat highlights as a
 // rounded BLOCK enclosing its own runs, so the hierarchy reads as a unit rather than a
@@ -28,7 +29,42 @@ function StatusRing({ status }) {
   );
 }
 
-function ChatBlock({ chat, selected, jobs, running, roleLabels, onSelect, onOpenRole, onDelete }) {
+function JobRow({ job, label, Icon, views, onOpenRole, onOpenView }) {
+  const [expanded, setExpanded] = useState(false);
+  const hasMore = views.length > 1;
+  return (
+    <div>
+      <div className="job-row-wrap">
+        <button className="job-row" onClick={() => onOpenRole(job.role)} title={`${label} — ${job.status}`}>
+          <StatusRing status={job.status} />
+          {Icon && <Icon size={12} />}
+          <span className="jname">{label}</span>
+          <span className="jage">{age(job.endedAt ?? job.startedAt)}</span>
+        </button>
+        {hasMore && (
+          <button
+            className={`job-expand ${expanded ? 'open' : ''}`}
+            title={`${views.length} views`}
+            onClick={(e) => { e.stopPropagation(); setExpanded((v) => !v); }}
+          >
+            <span className="twisty">▶</span>
+          </button>
+        )}
+      </div>
+      {expanded && (
+        <div className="view-list">
+          {views.map((v) => (
+            <button key={v.kind} className="view-row" onClick={() => onOpenView(job.role, v)}>
+              {v.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ChatBlock({ chat, selected, jobs, running, roleLabels, onSelect, onOpenRole, onOpenView, onDelete }) {
   const [open, setOpen] = useState(true);
   const mine = jobs.filter((j) => j.role);
   return (
@@ -57,14 +93,8 @@ function ChatBlock({ chat, selected, jobs, running, roleLabels, onSelect, onOpen
           {open &&
             mine.map((j) => {
               const Icon = ROLE_ICON[j.role];
-              return (
-                <button key={j.id} className="job-row" onClick={() => onOpenRole(j.role)} title={`${roleLabels[j.role] ?? j.role} — ${j.status}`}>
-                  <StatusRing status={j.status} />
-                  {Icon && <Icon size={12} />}
-                  <span className="jname">{roleLabels[j.role] ?? j.role}</span>
-                  <span className="jage">{age(j.endedAt ?? j.startedAt)}</span>
-                </button>
-              );
+              const views = ROLE_VIEWS[j.role] ?? [];
+              return <JobRow key={j.id} job={j} label={roleLabels[j.role] ?? j.role} Icon={Icon} views={views} onOpenRole={onOpenRole} onOpenView={onOpenView} />;
             })}
         </>
       )}
@@ -74,7 +104,7 @@ function ChatBlock({ chat, selected, jobs, running, roleLabels, onSelect, onOpen
 
 export default function NavTree({
   chats, projects, jobsByChat, activeChatId, running, roleLabels,
-  view, onView, onSelectChat, onNewChat, onNewProject, onOpenRole, inboxCount, panel,
+  view, onView, onSelectChat, onNewChat, onNewProject, onOpenRole, onOpenView, inboxCount, panel,
   onDeleteChat, onDeleteProject,
 }) {
   const byProject = new Map(projects.map((p) => [p.id, []]));
@@ -94,6 +124,7 @@ export default function NavTree({
       roleLabels={roleLabels}
       onSelect={onSelectChat}
       onOpenRole={onOpenRole}
+      onOpenView={onOpenView}
       onDelete={onDeleteChat}
     />
   );

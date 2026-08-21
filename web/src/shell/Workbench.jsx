@@ -13,6 +13,7 @@ import SettingsView from './SettingsView.jsx';
 import SaveTargetModal from './SaveTargetModal.jsx';
 import FileRail from './FileRail.jsx';
 import Splitter from './Splitter.jsx';
+import { ROLE_VIEWS } from './roleViews.js';
 import { PromptDialog, ConfirmDialog } from './Dialog.jsx';
 import AdapterSettings from '../components/AdapterSettings.jsx';
 import Inbox from '../components/Inbox.jsx';
@@ -34,18 +35,6 @@ import { ROLE_ICON, IconDiagram, IconServer, IconBrowser, IconTerminal, IconTrac
 const TAB_ICON = {
   diagram: IconDiagram, 'backend-map': IconServer, preview: IconBrowser, api: IconTerminal,
   trace: IconTrace, code: IconFile, artifact: IconFile, provenance: IconCheck, pack: IconFile, file: IconFile,
-};
-
-// Which output views each role offers, most useful first — clicking a run in the tree
-// opens the first entry.
-const ROLE_VIEWS = {
-  architect: [{ kind: 'diagram', label: 'Architecture' }, { kind: 'artifact', label: 'Contract' }],
-  backend: [{ kind: 'backend-map', label: 'Service map' }, { kind: 'code', label: 'Source' }, { kind: 'api', label: 'API console' }],
-  frontend: [{ kind: 'preview', label: 'Live preview' }, { kind: 'code', label: 'Source' }],
-  pm: [{ kind: 'artifact', label: 'Features' }],
-  uiux: [{ kind: 'artifact', label: 'Screens' }],
-  qa: [{ kind: 'artifact', label: 'Tests' }],
-  docs: [{ kind: 'artifact', label: 'Docs' }],
 };
 
 export default function Workbench() {
@@ -245,9 +234,15 @@ export default function Workbench() {
     setActiveTabId(id);
   }, [activeChatId]);
 
-  /** Clicking an agent run in the tree opens that role's most useful view. */
+  /** Clicking an agent run in the tree opens that role's most useful (first) view. */
   const openRole = useCallback((role) => {
     const v = (ROLE_VIEWS[role] ?? [{ kind: 'artifact', label: 'Output' }])[0];
+    openTab({ kind: v.kind, role, title: `${roleLabels[role] ?? role} · ${v.label}` });
+  }, [openTab, roleLabels]);
+
+  /** Opens a SPECIFIC view for a role — how Backend's Source/API console and Frontend's
+   * Source are reached now that a single click only opens the default view. */
+  const openView = useCallback((role, v) => {
     openTab({ kind: v.kind, role, title: `${roleLabels[role] ?? role} · ${v.label}` });
   }, [openTab, roleLabels]);
 
@@ -396,6 +391,7 @@ export default function Workbench() {
           onDeleteChat={(c) => setDialog({ kind: 'del-chat', target: c })}
           onDeleteProject={(p) => setDialog({ kind: 'del-project', target: p })}
           onOpenRole={openRole}
+          onOpenView={openView}
           panel={
             <SidePanel
               view={view} roles={roles} existing={existing} running={running} failed={failed}
