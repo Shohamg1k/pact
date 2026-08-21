@@ -3,11 +3,12 @@ import { getFile, approveInbox, ackInbox, answerClarification } from '../api.js'
 import { parseWorklog as parseJsonl } from '../lib/worklog.js';
 
 // UI-8: the single decision queue — clarifications, connector-write approvals, reviews.
-// GET /api/inbox?status=pending (global, cross-run) isn't wired server-side yet, so this
-// reads the real per-run inbox.jsonl via the existing artifact route and reconstructs
-// pending items the same way kernel/interrupts.js does. Approve/ack buttons call the P1/P2
-// routes from PRD §11 — built now, will 404 until server/index.js adds them (same honest-gap
-// treatment as UI-5).
+// GET /api/inbox?status=pending (global, cross-chat) isn't wired server-side yet, so this
+// reads the real per-chat inbox.jsonl via the existing artifact route and reconstructs
+// pending items the same way kernel/inbox.js does. Approve/ack call the real
+// POST /api/inbox/:id/approve and /ack routes (PRD §11 P1/P2) — both live in server/index.js
+// and gate.js's SEC-1 flow (see SettingsView.jsx's connector approve-and-retry for the same
+// round trip from the other direction).
 const TYPE_LABEL = {
   clarification: 'Question for you',
   connector_write: 'Export approval',
@@ -68,14 +69,24 @@ export default function Inbox({ chatId, onAnswered }) {
     setBusyId(item.id);
     const res = await approveInbox(item.id);
     setBusyId(null);
-    setNotice((n) => ({ ...n, [item.id]: res.ok ? 'approved' : `${res.status}: not wired yet (P1 gap)` }));
+    if (res.ok) {
+      setNotice((n) => ({ ...n, [item.id]: 'approved' }));
+      load();
+    } else {
+      setNotice((n) => ({ ...n, [item.id]: res.body?.detail ?? `failed (${res.status})` }));
+    }
   }
 
   async function ack(item) {
     setBusyId(item.id);
     const res = await ackInbox(item.id);
     setBusyId(null);
-    setNotice((n) => ({ ...n, [item.id]: res.ok ? 'acknowledged' : `${res.status}: not wired yet (P2 gap)` }));
+    if (res.ok) {
+      setNotice((n) => ({ ...n, [item.id]: 'acknowledged' }));
+      load();
+    } else {
+      setNotice((n) => ({ ...n, [item.id]: res.body?.detail ?? `failed (${res.status})` }));
+    }
   }
 
   if (items === null) return <div className="empty-state">loading…</div>;
