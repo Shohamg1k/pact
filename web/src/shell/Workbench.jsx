@@ -10,6 +10,7 @@ import Conversation from './Conversation.jsx';
 import AgentPanel from './AgentPanel.jsx';
 import SettingsView from './SettingsView.jsx';
 import SaveTargetModal from './SaveTargetModal.jsx';
+import FileRail from './FileRail.jsx';
 import AdapterSettings from '../components/AdapterSettings.jsx';
 import Inbox from '../components/Inbox.jsx';
 import CodeViewer from '../components/CodeViewer.jsx';
@@ -24,11 +25,12 @@ import LivePreview from '../tabs/LivePreview.jsx';
 import ApiConsole from '../tabs/ApiConsole.jsx';
 import ProvenanceTab from '../tabs/ProvenanceTab.jsx';
 import PackViewer from '../tabs/PackViewer.jsx';
+import FileTab from '../tabs/FileTab.jsx';
 import { ROLE_ICON, IconDiagram, IconServer, IconBrowser, IconTerminal, IconTrace, IconFile, IconCheck } from './icons.jsx';
 
 const TAB_ICON = {
   diagram: IconDiagram, 'backend-map': IconServer, preview: IconBrowser, api: IconTerminal,
-  trace: IconTrace, code: IconFile, artifact: IconFile, provenance: IconCheck, pack: IconFile,
+  trace: IconTrace, code: IconFile, artifact: IconFile, provenance: IconCheck, pack: IconFile, file: IconFile,
 };
 
 // Which output views each role offers, most useful first — clicking a run in the tree
@@ -66,6 +68,7 @@ export default function Workbench() {
   const [pendingBrief, setPendingBrief] = useState(null);
   const [startingBackend, setStartingBackend] = useState(false);
   const [inboxCount, setInboxCount] = useState(0);
+  const [showRail, setShowRail] = useState(true);
   const folderRef = useRef(null);
   const unsubRef = useRef(null);
 
@@ -161,6 +164,12 @@ export default function Workbench() {
     });
   }, []);
 
+  const openRailFile = useCallback((entry) => {
+    const id = `${activeChatId}:file:${entry.path}`;
+    setTabs((prev) => (prev.some((t) => t.id === id) ? prev : [...prev, { kind: 'file', entry, id, chatId: activeChatId, title: entry.name }]));
+    setActiveTabId(id);
+  }, [activeChatId]);
+
   /** Clicking an agent run in the tree opens that role's most useful view. */
   const openRole = useCallback((role) => {
     const v = (ROLE_VIEWS[role] ?? [{ kind: 'artifact', label: 'Output' }])[0];
@@ -227,6 +236,7 @@ export default function Workbench() {
       case 'provenance':
         return <ProvenanceTab chatId={tab.chatId} chat={chat} roles={roles}
           onOpenPack={(role, jobId) => openTab({ kind: 'pack', role, jobId, title: `${roleLabels[role] ?? role} · Pack` })} />;
+      case 'file': return <FileTab chatId={tab.chatId} entry={tab.entry} artifacts={artifacts} />;
       case 'pack': return <PackViewer chatId={tab.chatId} jobId={tab.jobId} roleLabel={roleLabels[tab.role] ?? tab.role} />;
       case 'trace':
         return <div className="pad"><TraceMatrix chatId={tab.chatId} refreshKey={Object.keys(a).join()}
@@ -246,8 +256,10 @@ export default function Workbench() {
     }
   }
 
+  const activeFilePath = activeTab?.kind === 'file' ? activeTab.entry.path : null;
+
   return (
-    <div className="shell">
+    <div className={`shell ${showRail ? '' : 'no-rail'}`}>
       <div className="pane nav">
         <NavTree
           chats={chats} projects={projects} jobsByChat={jobsByChat}
@@ -316,6 +328,16 @@ export default function Workbench() {
         </div>
       </div>
 
+      <div className="pane rail">
+        <FileRail
+          chatTitle={chat?.chat?.title}
+          artifacts={artifacts}
+          activePath={activeFilePath}
+          onOpenFile={openRailFile}
+          onRefresh={() => activeChatId && loadChat(activeChatId)}
+        />
+      </div>
+
       <div className="statusbar">
         <span className={`status-item ${running ? 'busy' : ''}`}>{running ? `● ${roleLabels[running] ?? running}` : chat ? '○ idle' : 'PACT'}</span>
         {chat && <span className="status-item">{existing.size}/7 agents</span>}
@@ -332,6 +354,9 @@ export default function Workbench() {
           </span>
         )}
         <span className="status-item">{activeAdapter?.name ?? 'no adapter'}</span>
+        <span className="status-item clickable" title="Toggle the file rail" onClick={() => setShowRail((v) => !v)}>
+          {showRail ? '▐ files' : '▌ files'}
+        </span>
       </div>
 
       {showAdapters && <AdapterSettings onClose={() => setShowAdapters(false)} />}

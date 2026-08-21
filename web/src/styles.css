@@ -34,6 +34,7 @@
   --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
 
   --nav-w: 292px;
+  --rail-w: 244px;
   --status-h: 24px;
   --radius: 8px;
 }
@@ -63,19 +64,48 @@ a { color: var(--accent); }
 
 .shell {
   display: grid;
-  grid-template-columns: var(--nav-w) minmax(360px, 1fr) minmax(380px, 1.1fr);
+  grid-template-columns: var(--nav-w) minmax(320px, 1fr) minmax(360px, 1.05fr) var(--rail-w);
   grid-template-rows: 1fr var(--status-h);
   height: 100%;
   gap: 0;
 }
-.shell.no-nav { grid-template-columns: 0 minmax(360px, 1fr) minmax(380px, 1.1fr); }
-.shell.no-out { grid-template-columns: var(--nav-w) 1fr 0; }
+.shell.no-rail { grid-template-columns: var(--nav-w) minmax(320px, 1fr) minmax(360px, 1.05fr) 0; }
+.shell.no-nav { grid-template-columns: 0 minmax(320px, 1fr) minmax(360px, 1.05fr) var(--rail-w); }
 
 .pane { min-width: 0; overflow: hidden; display: flex; flex-direction: column; }
 .pane.nav { background: var(--bg); }
 .pane.centre { background: var(--centre); border-left: 1px solid var(--border-soft); border-right: 1px solid var(--border-soft); }
 .pane.out { background: var(--deep); }
-.shell.no-nav .pane.nav, .shell.no-out .pane.out { display: none; }
+.pane.rail { background: var(--bg); border-left: 1px solid var(--border-soft); }
+.shell.no-nav .pane.nav, .shell.no-rail .pane.rail { display: none; }
+
+/* ---- file rail ---- */
+.rail-head {
+  display: flex; align-items: center; gap: 6px;
+  padding: 12px 10px 8px 14px; flex-shrink: 0;
+}
+.rail-title { flex: 1; font-size: 12.5px; color: var(--text); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-search { padding: 0 10px 8px; flex-shrink: 0; }
+.rail-search input { width: 100%; font-size: 12px; padding: 5px 8px; }
+.rail-scroll { flex: 1; overflow-y: auto; padding-bottom: 10px; }
+.rail-foot {
+  padding: 6px 14px; font-size: 11px; color: var(--text-faint);
+  border-top: 1px solid var(--border-soft); flex-shrink: 0;
+}
+.rail-row {
+  display: flex; align-items: center; gap: 6px;
+  width: 100%; padding: 3px 8px;
+  font-size: 12.5px; color: var(--text-dim);
+  text-align: left; border-radius: 5px;
+  white-space: nowrap; overflow: hidden;
+}
+.rail-row:hover { background: var(--hover); color: var(--text); }
+.rail-row.active { background: var(--sel); color: var(--text-bright); }
+.rail-row.dir { color: var(--text); }
+.rail-row .twisty { font-size: 8px; width: 9px; flex-shrink: 0; color: var(--text-faint); transition: transform 0.12s; }
+.rail-row .twisty.open { transform: rotate(90deg); }
+.rail-glyph { display: grid; place-items: center; flex-shrink: 0; }
+.rail-name { overflow: hidden; text-overflow: ellipsis; }
 
 /* ============================ nav pane ============================ */
 
