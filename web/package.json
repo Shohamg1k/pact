@@ -15,7 +15,8 @@
     "@monaco-editor/react": "^4.7.0",
     "monaco-editor": "^0.56.0",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "react-router-dom": "^7.18.2"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^6.1.0",

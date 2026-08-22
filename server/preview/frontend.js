@@ -26,6 +26,15 @@ const previewDir = (chatId) => path.join(chatDir(chatId), 'frontend-preview');
 /** Cache keyed by the frontend artifact's identity, so re-opening the tab is instant but
  * a regenerated frontend always rebuilds. */
 const bundles = new Map(); // chatId -> { key, js, error }
+/** In-flight build per chat, so concurrent callers share one build instead of racing.
+ * writeSources() does an rm(dir, {recursive:true}) followed by a sequential write loop
+ * with no lock — two callers for the SAME chat close together (the preview document and
+ * its /status route are fetched near-simultaneously, or a fast reload) would interleave:
+ * one call's rm() can delete files the other just wrote. Confirmed live, not
+ * hypothetical: two of eleven modules (both early in the array) went missing from disk
+ * while the rest survived, and esbuild failed on files that genuinely existed in the
+ * artifact but never made it to disk. */
+const inFlight = new Map(); // chatId -> Promise
 
 function manifestKey(manifest) {
   return `${manifest.modules.length}:${manifest.modules.reduce((n, m) => n + m.code.length, 0)}`;
@@ -59,41 +68,53 @@ export async function buildFrontendBundle(chatId) {
   const cached = bundles.get(chatId);
   if (cached && cached.key === key) return cached;
 
-  const dir = previewDir(chatId);
-  await writeSources(dir, manifest);
-  const entry = resolveEntry(dir, manifest);
-  if (!entry) {
-    const result = { key, error: `No entry module found (looked for ${manifest.entry ?? 'src/main.jsx'}).` };
-    bundles.set(chatId, result);
-    return result;
-  }
+  const existing = inFlight.get(chatId);
+  if (existing) return existing;
 
+  const build = (async () => {
+    const dir = previewDir(chatId);
+    await writeSources(dir, manifest);
+    const entry = resolveEntry(dir, manifest);
+    if (!entry) {
+      const result = { key, error: `No entry module found (looked for ${manifest.entry ?? 'src/main.jsx'}).` };
+      bundles.set(chatId, result);
+      return result;
+    }
+
+    try {
+      const esbuild = await import('esbuild');
+      const out = await esbuild.build({
+        entryPoints: [path.join(dir, entry)],
+        bundle: true,
+        write: false,
+        format: 'iife',
+        platform: 'browser',
+        target: 'es2020',
+        jsx: 'automatic',
+        // Generated code is frequently .js containing JSX — treat both as JSX rather than
+        // failing the whole preview on a file-extension technicality.
+        loader: { '.js': 'jsx', '.jsx': 'jsx', '.css': 'css' },
+        nodePaths: [WEB_NODE_MODULES],
+        define: { 'process.env.NODE_ENV': '"development"' },
+        logLevel: 'silent',
+      });
+      const js = out.outputFiles.map((f) => f.text).join('\n');
+      const result = { key, js, error: null };
+      bundles.set(chatId, result);
+      return result;
+    } catch (e) {
+      const messages = (e.errors ?? []).map((x) => `${x.location?.file ?? ''}:${x.location?.line ?? ''} ${x.text}`).join('\n');
+      const result = { key, error: messages || e.message };
+      bundles.set(chatId, result);
+      return result;
+    }
+  })();
+
+  inFlight.set(chatId, build);
   try {
-    const esbuild = await import('esbuild');
-    const out = await esbuild.build({
-      entryPoints: [path.join(dir, entry)],
-      bundle: true,
-      write: false,
-      format: 'iife',
-      platform: 'browser',
-      target: 'es2020',
-      jsx: 'automatic',
-      // Generated code is frequently .js containing JSX — treat both as JSX rather than
-      // failing the whole preview on a file-extension technicality.
-      loader: { '.js': 'jsx', '.jsx': 'jsx', '.css': 'css' },
-      nodePaths: [WEB_NODE_MODULES],
-      define: { 'process.env.NODE_ENV': '"development"' },
-      logLevel: 'silent',
-    });
-    const js = out.outputFiles.map((f) => f.text).join('\n');
-    const result = { key, js, error: null };
-    bundles.set(chatId, result);
-    return result;
-  } catch (e) {
-    const messages = (e.errors ?? []).map((x) => `${x.location?.file ?? ''}:${x.location?.line ?? ''} ${x.text}`).join('\n');
-    const result = { key, error: messages || e.message };
-    bundles.set(chatId, result);
-    return result;
+    return await build;
+  } finally {
+    inFlight.delete(chatId);
   }
 }
 
