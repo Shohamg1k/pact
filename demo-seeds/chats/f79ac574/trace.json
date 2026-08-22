@@ -1,0 +1,338 @@
+{
+  "rows": [
+    {
+      "contractItem": "API-01",
+      "kind": "api",
+      "model": "backend:routes/auth.js, backend:server.js, qa:TC-01, qa:TC-02, qa:TC-03, qa:TC-04, qa:TC-05",
+      "route": "POST /api/auth/register",
+      "test": null,
+      "status": "OK"
+    },
+    {
+      "contractItem": "API-02",
+      "kind": "api",
+      "model": "backend:routes/auth.js, backend:server.js, qa:TC-06, qa:TC-07, qa:TC-08, qa:TC-09",
+      "route": "POST /api/auth/login",
+      "test": null,
+      "status": "OK"
+    },
+    {
+      "contractItem": "API-03",
+      "kind": "api",
+      "model": "backend:routes/notes.js, backend:server.js, qa:TC-10, qa:TC-11, qa:TC-12, qa:TC-13, qa:TC-14, qa:TC-15, qa:TC-16, qa:TC-17, qa:TC-18, qa:TC-19, qa:TC-38",
+      "route": "POST /api/notes",
+      "test": null,
+      "status": "OK"
+    },
+    {
+      "contractItem": "API-04",
+      "kind": "api",
+      "model": "backend:routes/notes.js, backend:server.js, qa:TC-20, qa:TC-21, qa:TC-22, qa:TC-23, qa:TC-24, qa:TC-25, qa:TC-26, qa:TC-27",
+      "route": "GET /api/notes",
+      "test": null,
+      "status": "OK"
+    },
+    {
+      "contractItem": "API-05",
+      "kind": "api",
+      "model": "backend:routes/notes.js, backend:server.js, qa:TC-28, qa:TC-29, qa:TC-30, qa:TC-31, qa:TC-32",
+      "route": "GET /api/notes/:id",
+      "test": null,
+      "status": "OK"
+    },
+    {
+      "contractItem": "API-06",
+      "kind": "api",
+      "model": "backend:routes/notes.js, backend:server.js, qa:TC-33, qa:TC-34, qa:TC-35, qa:TC-36, qa:TC-37",
+      "route": "DELETE /api/notes/:id",
+      "test": null,
+      "status": "OK"
+    },
+    {
+      "contractItem": "C-01",
+      "kind": "collection",
+      "model": "backend:models/User.js, backend:routes/auth.js, backend:server.js, qa:TC-01, qa:TC-04, qa:TC-05",
+      "route": null,
+      "test": null,
+      "status": "OK"
+    },
+    {
+      "contractItem": "C-02",
+      "kind": "collection",
+      "model": "backend:models/Note.js, backend:routes/notes.js, backend:server.js, qa:TC-10, qa:TC-18, qa:TC-19",
+      "route": null,
+      "test": null,
+      "status": "OK"
+    },
+    {
+      "contractItem": "F-01",
+      "kind": "feature",
+      "model": "backend:routes/auth.js, backend:server.js, qa:TC-01, qa:TC-02, qa:TC-03, qa:TC-04, qa:TC-05, qa:TC-06, qa:TC-07, qa:TC-08, qa:TC-09",
+      "route": null,
+      "test": null,
+      "status": "OK"
+    },
+    {
+      "contractItem": "F-02",
+      "kind": "feature",
+      "model": "backend:routes/notes.js, backend:server.js, qa:TC-10, qa:TC-11, qa:TC-12, qa:TC-13, qa:TC-14, qa:TC-15, qa:TC-16, qa:TC-17, qa:TC-18, qa:TC-19, qa:TC-38",
+      "route": null,
+      "test": null,
+      "status": "OK"
+    },
+    {
+      "contractItem": "F-03",
+      "kind": "feature",
+      "model": "backend:routes/notes.js, backend:server.js, qa:TC-20, qa:TC-21, qa:TC-22, qa:TC-23, qa:TC-24, qa:TC-25, qa:TC-26, qa:TC-27, qa:TC-28, qa:TC-29, qa:TC-30, qa:TC-31, qa:TC-32",
+      "route": null,
+      "test": null,
+      "status": "OK"
+    },
+    {
+      "contractItem": "F-04",
+      "kind": "feature",
+      "model": "backend:routes/notes.js, backend:server.js, qa:TC-33, qa:TC-34, qa:TC-35, qa:TC-36, qa:TC-37",
+      "route": null,
+      "test": null,
+      "status": "OK"
+    }
+  ],
+  "reverse": {
+    "models/User.js": [
+      "C-01",
+      "F-01"
+    ],
+    "models/Note.js": [
+      "C-02",
+      "F-02",
+      "F-03",
+      "F-04"
+    ],
+    "utils/token.js": [
+      "BR-01",
+      "F-01"
+    ],
+    "utils/validate.js": [
+      "BR-04",
+      "BR-09",
+      "BR-07"
+    ],
+    "middleware/auth.js": [
+      "BR-01",
+      "BR-02"
+    ],
+    "routes/auth.js": [
+      "API-01",
+      "API-02",
+      "F-01",
+      "C-01",
+      "BR-07",
+      "BR-08"
+    ],
+    "routes/notes.js": [
+      "API-03",
+      "API-04",
+      "API-05",
+      "API-06",
+      "F-02",
+      "F-03",
+      "F-04",
+      "C-02",
+      "BR-01",
+      "BR-02",
+      "BR-03",
+      "BR-04",
+      "BR-05",
+      "BR-06",
+      "BR-09"
+    ],
+    "server.js": [
+      "API-01",
+      "API-02",
+      "API-03",
+      "API-04",
+      "API-05",
+      "API-06",
+      "C-01",
+      "C-02"
+    ],
+    "TC-01": [
+      "API-01",
+      "F-01",
+      "C-01"
+    ],
+    "TC-02": [
+      "API-01",
+      "BR-07"
+    ],
+    "TC-03": [
+      "API-01",
+      "AS-07"
+    ],
+    "TC-04": [
+      "API-01",
+      "C-01"
+    ],
+    "TC-05": [
+      "API-01",
+      "AS-07",
+      "C-01"
+    ],
+    "TC-06": [
+      "API-02",
+      "F-01"
+    ],
+    "TC-07": [
+      "API-02",
+      "BR-08"
+    ],
+    "TC-08": [
+      "API-02",
+      "BR-08"
+    ],
+    "TC-09": [
+      "API-02"
+    ],
+    "TC-10": [
+      "API-03",
+      "F-02",
+      "C-02"
+    ],
+    "TC-11": [
+      "API-03",
+      "AS-02"
+    ],
+    "TC-12": [
+      "API-03",
+      "BR-01"
+    ],
+    "TC-13": [
+      "API-03",
+      "BR-01"
+    ],
+    "TC-14": [
+      "API-03",
+      "BR-01",
+      "AS-07"
+    ],
+    "TC-15": [
+      "API-03",
+      "BR-02"
+    ],
+    "TC-16": [
+      "API-03",
+      "BR-04"
+    ],
+    "TC-17": [
+      "API-03",
+      "BR-04"
+    ],
+    "TC-18": [
+      "API-03",
+      "BR-04",
+      "C-02"
+    ],
+    "TC-19": [
+      "API-03",
+      "C-02"
+    ],
+    "TC-20": [
+      "API-04",
+      "F-03",
+      "BR-09"
+    ],
+    "TC-21": [
+      "API-04",
+      "BR-03"
+    ],
+    "TC-22": [
+      "API-04",
+      "BR-05"
+    ],
+    "TC-23": [
+      "API-04",
+      "BR-01"
+    ],
+    "TC-24": [
+      "API-04",
+      "BR-09"
+    ],
+    "TC-25": [
+      "API-04",
+      "BR-09"
+    ],
+    "TC-26": [
+      "API-04",
+      "BR-09"
+    ],
+    "TC-27": [
+      "API-04",
+      "BR-09",
+      "F-03"
+    ],
+    "TC-28": [
+      "API-05",
+      "F-03"
+    ],
+    "TC-29": [
+      "API-05",
+      "BR-03"
+    ],
+    "TC-30": [
+      "API-05",
+      "BR-05"
+    ],
+    "TC-31": [
+      "API-05",
+      "BR-03"
+    ],
+    "TC-32": [
+      "API-05",
+      "BR-01"
+    ],
+    "TC-33": [
+      "API-06",
+      "F-04",
+      "BR-05"
+    ],
+    "TC-34": [
+      "API-06",
+      "BR-06"
+    ],
+    "TC-35": [
+      "API-06",
+      "BR-06"
+    ],
+    "TC-36": [
+      "API-06",
+      "BR-03"
+    ],
+    "TC-37": [
+      "API-06",
+      "BR-01"
+    ],
+    "TC-38": [
+      "API-03",
+      "AS-02"
+    ],
+    "TC-39": [
+      "AS-03",
+      "F-02"
+    ]
+  },
+  "gaps": [
+    "AS-04 (soft delete is recoverable by an operator) can only be verified by inspecting the MongoDB document directly — TC-33/TC-34 assert the surviving deleted_at, but the contract exposes no restore endpoint to test recovery end to end.",
+    "BR-07's concurrency guarantee (the unique index deciding a race between two simultaneous registrations of the same email) is not covered by a test case, because the runner issues requests sequentially; TC-02 covers only the sequential 409 path.",
+    "BR-08's timing-equivalence half (the dummy bcrypt compare making unknown-email and wrong-password indistinguishable in response time) is not asserted — TC-08 verifies only that the status and body are identical, since wall-clock timing is too noisy for a deterministic assertion.",
+    "No frontend artifacts were provided, so no UI-level tests exist for the React client described in the diagram (token storage, list rendering, compose box).",
+    "No Product Manager artifact was provided — personas, goals, success metrics, and prioritisation rationale are unavailable. The user guide's persona section is derived solely from the 'Note owner' actor in the architecture diagram.",
+    "No UI/UX artifact was provided — there are no wireframes, user flows, screen states, or interface copy to document.",
+    "No Frontend artifact was provided — the React SPA appears in the architecture diagram but no code, components, routing, or token-storage strategy exists. The user guide therefore documents the product at the API level only.",
+    "No deployment or operations artifact was provided — hosting, TLS termination, CORS, secret management, logging, health checks, backups, and migrations are undocumented. Notably, utils/token.js falls back to the hardcoded string 'pact-local-development-secret' when JWT_SECRET is unset, and unlike MONGO_URL its absence does not fail startup.",
+    "No artifact specifies rate limiting or login throttling, so the API reference cannot document any protection against credential-stuffing or brute-force attempts.",
+    "AS-04 (soft delete is recoverable by an operator) has no supporting endpoint — recovery is database-level only, so neither the spec nor the guide can describe a restore path, and QA cannot verify recovery end to end.",
+    "QA reported that BR-07's concurrency guarantee (the unique index deciding a race between two simultaneous registrations of the same email) is untested, because the runner issues requests sequentially; only the sequential 409 path (TC-02) is covered.",
+    "QA reported that BR-08's timing-equivalence half (the dummy bcrypt compare) is not asserted — TC-08 verifies only that status and body are identical, as wall-clock timing is too noisy for a deterministic assertion.",
+    "The architecture contract reports completeness_score 0.62, and the two load-bearing assumptions AS-01 (auth model, confidence 0.55) and AS-04 (soft delete, confidence 0.45) are unconfirmed by the brief — if either is wrong, the auth model or the delete semantics documented here change."
+  ]
+}

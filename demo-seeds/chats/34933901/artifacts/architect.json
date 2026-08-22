@@ -1,0 +1,213 @@
+{
+  "meta": {
+    "schema": "arch-contract/v1",
+    "id": "leave-management-200",
+    "completeness_score": 0.72
+  },
+  "stack": {
+    "default": "MERN",
+    "db": "mongodb",
+    "api": "express"
+  },
+  "features": [
+    {
+      "id": "F-01",
+      "name": "Employee submits a leave request",
+      "priority": "must"
+    },
+    {
+      "id": "F-02",
+      "name": "Manager views their team's pending requests",
+      "priority": "must"
+    },
+    {
+      "id": "F-03",
+      "name": "Manager approves or rejects a request",
+      "priority": "must"
+    },
+    {
+      "id": "F-04",
+      "name": "Employee views their own leave balance",
+      "priority": "must"
+    }
+  ],
+  "assumptions": [
+    {
+      "id": "AS-01",
+      "statement": "Every employee has exactly one manager, identified by manager_id; the brief gives no org-chart detail beyond \"a company of 200 employees\", so a flat one-level approval chain is assumed rather than multi-level escalation.",
+      "confidence": 0.55,
+      "source": "brief-silence"
+    },
+    {
+      "id": "AS-02",
+      "statement": "Each employee gets a fixed annual allotment of 20 paid leave days, decremented on approval, not on request — a rejected or pending request never touches the balance.",
+      "confidence": 0.5,
+      "source": "domain-norm"
+    },
+    {
+      "id": "AS-03",
+      "statement": "A request cannot be approved if it would take the balance negative; the API returns 409 rather than silently allowing an overdraw.",
+      "confidence": 0.7,
+      "source": "domain-norm"
+    },
+    {
+      "id": "AS-04",
+      "statement": "Authentication is a bearer token whose payload carries the employee_id and role (employee|manager); the brief specifies no auth mechanism.",
+      "confidence": 0.5,
+      "source": "brief-silence"
+    }
+  ],
+  "business_rules": [
+    "BR-01: Every endpoint requires a valid bearer token; missing or invalid returns 401.",
+    "BR-02: An employee can only see and act on their own requests; a manager can additionally see requests where they are the named manager_id.",
+    "BR-03: A leave request needs a start_date, end_date, and reason; end_date before start_date is 422.",
+    "BR-04: Only a pending request can be approved or rejected; acting on an already-decided request returns 409.",
+    "BR-05: Approving a request that would exceed the remaining balance returns 409 and does not decrement anything.",
+    "BR-06: A manager cannot approve or reject their own request, even if it happens to route through their own manager_id by data error — checked explicitly, not assumed impossible."
+  ],
+  "collections": [
+    {
+      "id": "C-01",
+      "name": "employees",
+      "fields": [
+        "_id ObjectId primary key",
+        "name string required",
+        "email string required unique lowercase indexed",
+        "role string required enum(employee,manager)",
+        "manager_id ObjectId nullable ref:employees indexed",
+        "leave_balance_days number required default 20",
+        "created_at Date required default now"
+      ]
+    },
+    {
+      "id": "C-02",
+      "name": "leave_requests",
+      "fields": [
+        "_id ObjectId primary key",
+        "employee_id ObjectId required ref:employees indexed",
+        "manager_id ObjectId required ref:employees indexed",
+        "start_date Date required",
+        "end_date Date required",
+        "days number required computed-from(start_date,end_date)",
+        "reason string required max 500",
+        "status string required enum(pending,approved,rejected) default pending indexed",
+        "decided_at Date nullable default null",
+        "created_at Date required default now",
+        "compound index (manager_id, status, created_at desc)"
+      ]
+    }
+  ],
+  "apis": [
+    {
+      "id": "API-01",
+      "feature_id": "F-01",
+      "method": "POST",
+      "path": "/api/leave-requests",
+      "request": {
+        "start_date": "ISO date string, required",
+        "end_date": "ISO date string, required",
+        "reason": "string, required, max 500"
+      },
+      "response": {
+        "id": "string",
+        "status": "string",
+        "days": "number"
+      },
+      "errors": [
+        400,
+        401,
+        422
+      ],
+      "rules": [
+        "BR-01",
+        "BR-03"
+      ]
+    },
+    {
+      "id": "API-02",
+      "feature_id": "F-02",
+      "method": "GET",
+      "path": "/api/leave-requests",
+      "request": {
+        "status": "query param, optional, filters to pending|approved|rejected"
+      },
+      "response": {
+        "items": "array of leave_requests scoped to caller (BR-02)"
+      },
+      "errors": [
+        400,
+        401
+      ],
+      "rules": [
+        "BR-01",
+        "BR-02"
+      ]
+    },
+    {
+      "id": "API-03",
+      "feature_id": "F-03",
+      "method": "PATCH",
+      "path": "/api/leave-requests/:id/approve",
+      "request": {
+        "id": "path param"
+      },
+      "response": {
+        "id": "string",
+        "status": "approved",
+        "employee_balance_days": "number"
+      },
+      "errors": [
+        401,
+        404,
+        409
+      ],
+      "rules": [
+        "BR-01",
+        "BR-04",
+        "BR-05",
+        "BR-06"
+      ]
+    },
+    {
+      "id": "API-04",
+      "feature_id": "F-03",
+      "method": "PATCH",
+      "path": "/api/leave-requests/:id/reject",
+      "request": {
+        "id": "path param"
+      },
+      "response": {
+        "id": "string",
+        "status": "rejected"
+      },
+      "errors": [
+        401,
+        404,
+        409
+      ],
+      "rules": [
+        "BR-01",
+        "BR-04",
+        "BR-06"
+      ]
+    },
+    {
+      "id": "API-05",
+      "feature_id": "F-04",
+      "method": "GET",
+      "path": "/api/leave-balance",
+      "request": {},
+      "response": {
+        "employee_id": "string",
+        "leave_balance_days": "number"
+      },
+      "errors": [
+        401
+      ],
+      "rules": [
+        "BR-01",
+        "BR-02"
+      ]
+    }
+  ]
+}

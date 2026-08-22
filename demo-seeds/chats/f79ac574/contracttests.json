@@ -1,0 +1,92 @@
+{
+  "schema": "contracttests/v1",
+  "total": 6,
+  "passed": 6,
+  "failed": 0,
+  "results": [
+    {
+      "id": "API-01-declared-status",
+      "apiId": "API-01",
+      "kind": "declared_status",
+      "method": "POST",
+      "path": "/api/auth/register",
+      "declaredErrors": [
+        409,
+        422
+      ],
+      "description": "POST /api/auth/register (API-01) should return 2xx or a status the contract declared as an error: [409,422]",
+      "actualStatus": 422,
+      "pass": true
+    },
+    {
+      "id": "API-02-declared-status",
+      "apiId": "API-02",
+      "kind": "declared_status",
+      "method": "POST",
+      "path": "/api/auth/login",
+      "declaredErrors": [
+        401,
+        422
+      ],
+      "description": "POST /api/auth/login (API-02) should return 2xx or a status the contract declared as an error: [401,422]",
+      "actualStatus": 422,
+      "pass": true
+    },
+    {
+      "id": "API-03-declared-status",
+      "apiId": "API-03",
+      "kind": "declared_status",
+      "method": "POST",
+      "path": "/api/notes",
+      "declaredErrors": [
+        401,
+        422
+      ],
+      "description": "POST /api/notes (API-03) should return 2xx or a status the contract declared as an error: [401,422]",
+      "actualStatus": 401,
+      "pass": true
+    },
+    {
+      "id": "API-04-declared-status",
+      "apiId": "API-04",
+      "kind": "declared_status",
+      "method": "GET",
+      "path": "/api/notes",
+      "declaredErrors": [
+        401,
+        422
+      ],
+      "description": "GET /api/notes (API-04) should return 2xx or a status the contract declared as an error: [401,422]",
+      "actualStatus": 401,
+      "pass": true
+    },
+    {
+      "id": "API-05-declared-status",
+      "apiId": "API-05",
+      "kind": "declared_status",
+      "method": "GET",
+      "path": "/api/notes/000000000000000000000001",
+      "declaredErrors": [
+        401,
+        404
+      ],
+      "description": "GET /api/notes/:id (API-05) should return 2xx or a status the contract declared as an error: [401,404]",
+      "actualStatus": 401,
+      "pass": true
+    },
+    {
+      "id": "API-06-declared-status",
+      "apiId": "API-06",
+      "kind": "declared_status",
+      "method": "DELETE",
+      "path": "/api/notes/000000000000000000000001",
+      "declaredErrors": [
+        401,
+        404
+      ],
+      "description": "DELETE /api/notes/:id (API-06) should return 2xx or a status the contract declared as an error: [401,404]",
+      "actualStatus": 401,
+      "pass": true
+    }
+  ]
+}

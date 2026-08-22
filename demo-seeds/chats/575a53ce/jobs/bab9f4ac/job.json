@@ -1,0 +1,14 @@
+{
+  "id": "bab9f4ac",
+  "role": "backend",
+  "status": "passed",
+  "adapter": "claude-code",
+  "startedAt": "2026-08-22T00:05:01.145Z",
+  "endedAt": "2026-08-22T00:05:01.145Z",
+  "hash": "sha256:b0e9a3dc3313a8c8c0f4a3481b7a762884fd866eeb1b01ff5ba7332d4676b22e",
+  "gaps": [
+    "BR-01/AS-04: no identity provider is named, so middleware/auth.js uses the same HS256-if-configured, else structurally-valid-token fallback as the other demo projects.",
+    "AS-03: supplier orders are not modelled as their own entity in this pass — the low-stock endpoint (API-04) is the signal a real supplier-ordering feature would consume, not a purchase-order system itself."
+  ],
+  "savedTokens": 0
+}

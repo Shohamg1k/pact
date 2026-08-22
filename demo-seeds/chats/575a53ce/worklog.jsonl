@@ -1,0 +1,4 @@
+{"ts":1787356302076,"phase":"chat","event":"created","detail":{}}
+{"ts":1787357101154,"phase":"chat","event":"created","detail":{}}
+{"ts":1787357101156,"phase":"architect","event":"committed","detail":{"jobId":"faa4bea2","hash":"sha256:6771ecbeafe0733a4bd2d7020a54b7b95a943f414ceba95d5b4f9cf36c29cdb5","gaps":[],"savedTokens":0}}
+{"ts":1787357101159,"phase":"backend","event":"committed","detail":{"jobId":"bab9f4ac","hash":"sha256:b0e9a3dc3313a8c8c0f4a3481b7a762884fd866eeb1b01ff5ba7332d4676b22e","gaps":["BR-01/AS-04: no identity provider is named, so middleware/auth.js uses the same HS256-if-configured, else structurally-valid-token fallback as the other demo projects.","AS-03: supplier orders are not modelled as their own entity in this pass — the low-stock endpoint (API-04) is the signal a real supplier-ordering feature would consume, not a purchase-order system itself."],"savedTokens":0}}

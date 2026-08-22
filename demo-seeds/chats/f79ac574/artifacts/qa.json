@@ -1,0 +1,527 @@
+{
+  "meta": {
+    "schema": "qa/v1",
+    "chatId": "f79ac574"
+  },
+  "test_cases": [
+    {
+      "id": "TC-01",
+      "implements": [
+        "API-01",
+        "F-01",
+        "C-01"
+      ],
+      "description": "Registration with a fresh email returns a user, a JWT and its TTL",
+      "steps": [
+        "POST /api/auth/register with body {\"email\":\"ada@example.com\",\"password\":\"correct-horse\",\"display_name\":\"Ada\"}"
+      ],
+      "expected": "201 Created; body has user.id (string), user.email == \"ada@example.com\", user.display_name == \"Ada\", a non-empty token string and expires_in == 86400; no password or password_hash field appears anywhere in the response; a users document exists with email \"ada@example.com\""
+    },
+    {
+      "id": "TC-02",
+      "implements": [
+        "API-01",
+        "BR-07"
+      ],
+      "description": "Registering an email that already exists returns 409, compared case-insensitively",
+      "steps": [
+        "POST /api/auth/register with {\"email\":\"dup@example.com\",\"password\":\"correct-horse\"}",
+        "POST /api/auth/register again with {\"email\":\"DUP@Example.COM\",\"password\":\"another-password-9\"}"
+      ],
+      "expected": "First call 201. Second call 409 Conflict with error == \"email_already_registered\" and no token in the body; the users collection still contains exactly one document for dup@example.com and its password_hash is unchanged from the first registration"
+    },
+    {
+      "id": "TC-03",
+      "implements": [
+        "API-01",
+        "AS-07"
+      ],
+      "description": "Registration rejects a password shorter than the 8-character minimum",
+      "steps": [
+        "POST /api/auth/register with {\"email\":\"short@example.com\",\"password\":\"abc123\"}"
+      ],
+      "expected": "422 Unprocessable Entity with error == \"unprocessable_entity\" and details containing an entry whose field == \"password\"; no users document is created for short@example.com"
+    },
+    {
+      "id": "TC-04",
+      "implements": [
+        "API-01",
+        "C-01"
+      ],
+      "description": "Registration rejects a missing or malformed email address",
+      "steps": [
+        "POST /api/auth/register with {\"password\":\"correct-horse\"} (no email key)",
+        "POST /api/auth/register with {\"email\":\"not-an-email\",\"password\":\"correct-horse\"}"
+      ],
+      "expected": "Both calls return 422 with details containing an entry whose field == \"email\"; no user documents are created by either call"
+    },
+    {
+      "id": "TC-05",
+      "implements": [
+        "API-01",
+        "AS-07",
+        "C-01"
+      ],
+      "description": "A registered password is stored as a bcrypt hash, never in plaintext",
+      "steps": [
+        "POST /api/auth/register with {\"email\":\"hash@example.com\",\"password\":\"correct-horse\"}",
+        "Read the users document for hash@example.com from MongoDB"
+      ],
+      "expected": "201 Created; the stored document has no `password` field, and password_hash is a bcrypt string starting with \"$2\" and containing the cost segment \"$12$\" — it is not equal to \"correct-horse\""
+    },
+    {
+      "id": "TC-06",
+      "implements": [
+        "API-02",
+        "F-01"
+      ],
+      "description": "Login with correct credentials returns a usable token",
+      "steps": [
+        "POST /api/auth/register with {\"email\":\"login@example.com\",\"password\":\"correct-horse\"}",
+        "POST /api/auth/login with {\"email\":\"LOGIN@example.com\",\"password\":\"correct-horse\"}"
+      ],
+      "expected": "200 OK; body has user.id equal to the id returned at registration, user.email == \"login@example.com\", a token string and expires_in == 86400; using that token as `Authorization: Bearer <token>` on GET /api/notes returns 200"
+    },
+    {
+      "id": "TC-07",
+      "implements": [
+        "API-02",
+        "BR-08"
+      ],
+      "description": "Login with a wrong password returns 401 with no token",
+      "steps": [
+        "POST /api/auth/register with {\"email\":\"probe@example.com\",\"password\":\"correct-horse\"}",
+        "POST /api/auth/login with {\"email\":\"probe@example.com\",\"password\":\"wrong-password-1\"}"
+      ],
+      "expected": "401 Unauthorized with error == \"invalid_credentials\" and message == \"Email or password is incorrect.\"; no token field in the response body"
+    },
+    {
+      "id": "TC-08",
+      "implements": [
+        "API-02",
+        "BR-08"
+      ],
+      "description": "Login with an unknown email returns a response byte-identical to the wrong-password response, so accounts cannot be probed",
+      "steps": [
+        "POST /api/auth/login with {\"email\":\"probe@example.com\",\"password\":\"wrong-password-1\"} (existing user, wrong password)",
+        "POST /api/auth/login with {\"email\":\"nobody-here@example.com\",\"password\":\"wrong-password-1\"} (no such user)"
+      ],
+      "expected": "Both return 401 and their JSON bodies are identical (same error code and same message string) — nothing in status, error, or message distinguishes an unknown email from a wrong password"
+    },
+    {
+      "id": "TC-09",
+      "implements": [
+        "API-02"
+      ],
+      "description": "Login rejects a request missing required fields with 422 rather than 401",
+      "steps": [
+        "POST /api/auth/login with {\"email\":\"login@example.com\"} (no password key)"
+      ],
+      "expected": "422 Unprocessable Entity with error == \"unprocessable_entity\" and details containing an entry whose field == \"password\"; no token is issued"
+    },
+    {
+      "id": "TC-10",
+      "implements": [
+        "API-03",
+        "F-02",
+        "C-02"
+      ],
+      "description": "Creating a note with a valid token returns the persisted note",
+      "steps": [
+        "POST /api/notes with header `Authorization: Bearer <token>` and body {\"title\":\"Groceries\",\"body\":\"milk, eggs\"}"
+      ],
+      "expected": "201 Created; body has a string id, title == \"Groceries\", body == \"milk, eggs\", ISO8601 created_at and updated_at; the stored notes document has owner_id equal to the token's user, deleted_at == null, and no owner_id is echoed in the response"
+    },
+    {
+      "id": "TC-11",
+      "implements": [
+        "API-03",
+        "AS-02"
+      ],
+      "description": "Title is optional — a note created without one comes back with title null",
+      "steps": [
+        "POST /api/notes with a valid bearer token and body {\"body\":\"just a body, no title\"}"
+      ],
+      "expected": "201 Created with title == null (JSON null, not the string \"null\" and not absent) and body == \"just a body, no title\""
+    },
+    {
+      "id": "TC-12",
+      "implements": [
+        "API-03",
+        "BR-01"
+      ],
+      "description": "Creating a note with no Authorization header is refused before any write",
+      "steps": [
+        "POST /api/notes with NO Authorization header and body {\"body\":\"should never be stored\"}"
+      ],
+      "expected": "401 Unauthorized with error == \"unauthorized\"; response contains no note id and no note data; the notes collection gains no document with body \"should never be stored\""
+    },
+    {
+      "id": "TC-13",
+      "implements": [
+        "API-03",
+        "BR-01"
+      ],
+      "description": "A malformed, wrongly-signed, or non-Bearer token is rejected with 401",
+      "steps": [
+        "POST /api/notes with header `Authorization: Bearer not.a.jwt` and body {\"body\":\"x\"}",
+        "POST /api/notes with header `Authorization: <valid-token>` (Bearer prefix omitted) and body {\"body\":\"x\"}",
+        "POST /api/notes with a JWT signed with a different secret and body {\"body\":\"x\"}"
+      ],
+      "expected": "All three return 401 with error == \"unauthorized\" and identical bodies; no notes documents are created"
+    },
+    {
+      "id": "TC-14",
+      "implements": [
+        "API-03",
+        "BR-01",
+        "AS-07"
+      ],
+      "description": "An expired JWT is rejected on a notes route",
+      "steps": [
+        "POST /api/notes with an `Authorization: Bearer <token>` whose exp claim is in the past (signed with the server's JWT_SECRET) and body {\"body\":\"expired token note\"}"
+      ],
+      "expected": "401 Unauthorized with error == \"unauthorized\"; no note is created"
+    },
+    {
+      "id": "TC-15",
+      "implements": [
+        "API-03",
+        "BR-02"
+      ],
+      "description": "owner_id in the request body is ignored — a client cannot create a note for another user",
+      "steps": [
+        "Register user A and user B; capture A's token and B's user id",
+        "POST /api/notes as user A with body {\"body\":\"planted note\",\"owner_id\":\"<user B id>\"}"
+      ],
+      "expected": "201 Created; the stored note's owner_id equals user A's id, not user B's; GET /api/notes as user B returns total 0 and no item with body \"planted note\", while GET /api/notes as user A includes it"
+    },
+    {
+      "id": "TC-16",
+      "implements": [
+        "API-03",
+        "BR-04"
+      ],
+      "description": "An empty or whitespace-only body is rejected with 422",
+      "steps": [
+        "POST /api/notes with a valid token and body {\"body\":\"\"}",
+        "POST /api/notes with a valid token and body {\"body\":\"     \"}",
+        "POST /api/notes with a valid token and body {\"title\":\"only a title\"} (no body key)"
+      ],
+      "expected": "All three return 422 with error == \"unprocessable_entity\" and details containing an entry whose field == \"body\"; the notes collection gains no documents from these calls"
+    },
+    {
+      "id": "TC-17",
+      "implements": [
+        "API-03",
+        "BR-04"
+      ],
+      "description": "Body length boundary: 10,000 characters is accepted, 10,001 is rejected",
+      "steps": [
+        "POST /api/notes with a valid token and body {\"body\":\"<exactly 10000 'a' characters>\"}",
+        "POST /api/notes with a valid token and body {\"body\":\"<exactly 10001 'a' characters>\"}"
+      ],
+      "expected": "First call 201 Created with a body field of length 10000. Second call 422 with details field == \"body\"; no second note is stored"
+    },
+    {
+      "id": "TC-18",
+      "implements": [
+        "API-03",
+        "BR-04",
+        "C-02"
+      ],
+      "description": "Body is trimmed before storage and length is measured after trimming",
+      "steps": [
+        "POST /api/notes with a valid token and body {\"body\":\"   padded note   \"}"
+      ],
+      "expected": "201 Created with body == \"padded note\" (no leading or trailing whitespace) in both the response and the stored document"
+    },
+    {
+      "id": "TC-19",
+      "implements": [
+        "API-03",
+        "C-02"
+      ],
+      "description": "A title longer than 200 characters is rejected with 422",
+      "steps": [
+        "POST /api/notes with a valid token and body {\"title\":\"<201 'a' characters>\",\"body\":\"valid body\"}"
+      ],
+      "expected": "422 Unprocessable Entity with details containing an entry whose field == \"title\"; no note is created"
+    },
+    {
+      "id": "TC-20",
+      "implements": [
+        "API-04",
+        "F-03",
+        "BR-09"
+      ],
+      "description": "Listing returns the caller's notes newest-first with default paging metadata",
+      "steps": [
+        "As one user, POST /api/notes three times with bodies \"first\", \"second\", \"third\" (in that order)",
+        "GET /api/notes with that user's bearer token and no query parameters"
+      ],
+      "expected": "200 OK with page == 1, limit == 20, total == 3, and items[].body == [\"third\",\"second\",\"first\"] — created_at descending"
+    },
+    {
+      "id": "TC-21",
+      "implements": [
+        "API-04",
+        "BR-03"
+      ],
+      "description": "List returns only the caller's notes, never another user's",
+      "steps": [
+        "Register users A and B; as A POST /api/notes with body \"A-note\"; as B POST /api/notes with body \"B-note\"",
+        "GET /api/notes with A's bearer token",
+        "GET /api/notes with B's bearer token"
+      ],
+      "expected": "A's response is 200 with total == 1 and the only item's body == \"A-note\"; B's response is 200 with total == 1 and body == \"B-note\"; neither response contains the other user's note"
+    },
+    {
+      "id": "TC-22",
+      "implements": [
+        "API-04",
+        "BR-05"
+      ],
+      "description": "Soft-deleted notes are excluded from list responses and from the total count",
+      "steps": [
+        "As one user, create two notes; capture id1 and id2",
+        "DELETE /api/notes/<id1> with that user's token",
+        "GET /api/notes with the same token"
+      ],
+      "expected": "200 OK with total == 1 and items containing only id2; id1 appears in no item; the id1 document still exists in MongoDB with a non-null deleted_at"
+    },
+    {
+      "id": "TC-23",
+      "implements": [
+        "API-04",
+        "BR-01"
+      ],
+      "description": "Listing without a valid token returns 401 and leaks no note data",
+      "steps": [
+        "GET /api/notes with no Authorization header",
+        "GET /api/notes with header `Authorization: Bearer garbage`"
+      ],
+      "expected": "Both return 401 with error == \"unauthorized\"; neither response body contains an `items`, `total`, or any note field"
+    },
+    {
+      "id": "TC-24",
+      "implements": [
+        "API-04",
+        "BR-09"
+      ],
+      "description": "Page size above the 100 cap is rejected with 422 rather than silently clamped",
+      "steps": [
+        "GET /api/notes?limit=101 with a valid bearer token"
+      ],
+      "expected": "422 Unprocessable Entity with error == \"unprocessable_entity\" and details containing an entry whose field == \"limit\"; no items array is returned"
+    },
+    {
+      "id": "TC-25",
+      "implements": [
+        "API-04",
+        "BR-09"
+      ],
+      "description": "limit=100 (the boundary) is accepted",
+      "steps": [
+        "GET /api/notes?limit=100&page=1 with a valid bearer token"
+      ],
+      "expected": "200 OK with limit == 100 and page == 1 in the response body"
+    },
+    {
+      "id": "TC-26",
+      "implements": [
+        "API-04",
+        "BR-09"
+      ],
+      "description": "Non-integer or out-of-range paging parameters return 422",
+      "steps": [
+        "GET /api/notes?page=abc with a valid bearer token",
+        "GET /api/notes?page=0 with a valid bearer token",
+        "GET /api/notes?limit=-5 with a valid bearer token"
+      ],
+      "expected": "All three return 422 with details naming the offending field (\"page\" or \"limit\"); no items array is returned"
+    },
+    {
+      "id": "TC-27",
+      "implements": [
+        "API-04",
+        "BR-09",
+        "F-03"
+      ],
+      "description": "Pagination pages correctly through more notes than one page holds",
+      "steps": [
+        "As one user, create 25 notes with bodies \"note-01\" … \"note-25\" in ascending order",
+        "GET /api/notes?page=1 with that user's token",
+        "GET /api/notes?page=2 with that user's token"
+      ],
+      "expected": "Page 1: 200 with total == 25, limit == 20, items.length == 20, first item body == \"note-25\". Page 2: 200 with total == 25, page == 2, items.length == 5, first item body == \"note-05\"; the two pages share no ids"
+    },
+    {
+      "id": "TC-28",
+      "implements": [
+        "API-05",
+        "F-03"
+      ],
+      "description": "Fetching one of the caller's own notes by id returns it",
+      "steps": [
+        "POST /api/notes with a valid token and body {\"title\":\"T\",\"body\":\"fetch me\"}; capture the returned id",
+        "GET /api/notes/<id> with the same token"
+      ],
+      "expected": "200 OK with id equal to the captured id, title == \"T\", body == \"fetch me\", and ISO8601 created_at and updated_at"
+    },
+    {
+      "id": "TC-29",
+      "implements": [
+        "API-05",
+        "BR-03"
+      ],
+      "description": "Fetching another user's note returns 404, not 403, so ids are not enumerable",
+      "steps": [
+        "As user A, POST /api/notes with body {\"body\":\"A private\"}; capture idA",
+        "GET /api/notes/<idA> with user B's bearer token"
+      ],
+      "expected": "404 Not Found with error == \"not_found\" (never 403); the response contains no title or body from A's note, and GET /api/notes/<idA> as A still returns 200"
+    },
+    {
+      "id": "TC-30",
+      "implements": [
+        "API-05",
+        "BR-05"
+      ],
+      "description": "A soft-deleted note is no longer fetchable by id",
+      "steps": [
+        "Create a note as one user and capture its id",
+        "DELETE /api/notes/<id> with that user's token",
+        "GET /api/notes/<id> with the same token"
+      ],
+      "expected": "404 Not Found with error == \"not_found\"; the underlying document still exists in MongoDB with deleted_at set"
+    },
+    {
+      "id": "TC-31",
+      "implements": [
+        "API-05",
+        "BR-03"
+      ],
+      "description": "A non-existent or malformed note id is indistinguishable from a forbidden one",
+      "steps": [
+        "GET /api/notes/64b7f0000000000000000000 (well-formed ObjectId that matches no note) with a valid token",
+        "GET /api/notes/not-an-objectid with a valid token"
+      ],
+      "expected": "Both return 404 with identical bodies (error == \"not_found\"); neither returns 400 or 500, so a malformed id and an unowned id look the same from outside"
+    },
+    {
+      "id": "TC-32",
+      "implements": [
+        "API-05",
+        "BR-01"
+      ],
+      "description": "Fetching a note by id without a token returns 401 before any ownership lookup",
+      "steps": [
+        "GET /api/notes/<a real note id> with no Authorization header"
+      ],
+      "expected": "401 Unauthorized with error == \"unauthorized\"; the response body contains no note fields (no title, body, or created_at)"
+    },
+    {
+      "id": "TC-33",
+      "implements": [
+        "API-06",
+        "F-04",
+        "BR-05"
+      ],
+      "description": "Deleting one's own note soft-deletes it and returns the deletion timestamp",
+      "steps": [
+        "POST /api/notes with a valid token and body {\"body\":\"delete me\"}; capture the id",
+        "DELETE /api/notes/<id> with the same token"
+      ],
+      "expected": "200 OK with id equal to the captured id and a non-null ISO8601 deleted_at; the MongoDB document for that id still exists (it was not removed) and now has deleted_at set to that timestamp"
+    },
+    {
+      "id": "TC-34",
+      "implements": [
+        "API-06",
+        "BR-06"
+      ],
+      "description": "Deleting an already-deleted note returns 404 and does not overwrite the stored deleted_at",
+      "steps": [
+        "Create a note, capture the id, and DELETE /api/notes/<id>; record the returned deleted_at as T1",
+        "DELETE /api/notes/<id> a second time with the same token",
+        "Read the notes document for <id> from MongoDB"
+      ],
+      "expected": "Second DELETE returns 404 with error == \"not_found\"; the stored deleted_at still equals T1 (unchanged by the second call) and the document count is unchanged"
+    },
+    {
+      "id": "TC-35",
+      "implements": [
+        "API-06",
+        "BR-06"
+      ],
+      "description": "Deleting a note that never existed returns 404 and changes no state",
+      "steps": [
+        "Record the total count of documents in the notes collection",
+        "DELETE /api/notes/64b7f0000000000000000000 with a valid bearer token",
+        "DELETE /api/notes/not-an-objectid with the same token"
+      ],
+      "expected": "Both calls return 404 with error == \"not_found\"; the notes collection document count and every existing deleted_at value are unchanged"
+    },
+    {
+      "id": "TC-36",
+      "implements": [
+        "API-06",
+        "BR-03"
+      ],
+      "description": "A user cannot delete another user's note",
+      "steps": [
+        "As user A, POST /api/notes with body {\"body\":\"A keeps this\"}; capture idA",
+        "DELETE /api/notes/<idA> with user B's bearer token",
+        "GET /api/notes with user A's bearer token"
+      ],
+      "expected": "The DELETE returns 404 (not 403); A's list still returns total == 1 including idA, and the stored document for idA still has deleted_at == null"
+    },
+    {
+      "id": "TC-37",
+      "implements": [
+        "API-06",
+        "BR-01"
+      ],
+      "description": "Deleting without a valid token is refused and performs no write",
+      "steps": [
+        "Create a note as a user and capture its id",
+        "DELETE /api/notes/<id> with no Authorization header",
+        "DELETE /api/notes/<id> with header `Authorization: Bearer garbage`"
+      ],
+      "expected": "Both calls return 401 with error == \"unauthorized\"; the stored note still has deleted_at == null and GET /api/notes as the owner still lists it"
+    },
+    {
+      "id": "TC-38",
+      "implements": [
+        "API-03",
+        "AS-02"
+      ],
+      "description": "Malformed JSON in a note-create request is rejected as 422, not 500",
+      "steps": [
+        "POST /api/notes with a valid bearer token, header `Content-Type: application/json`, and a raw body of `{\"body\": ` (truncated, invalid JSON)"
+      ],
+      "expected": "422 Unprocessable Entity with error == \"unprocessable_entity\" and a details entry for field \"body\"; the response is never 500 and no note is created"
+    },
+    {
+      "id": "TC-39",
+      "implements": [
+        "AS-03",
+        "F-02"
+      ],
+      "description": "There is no update endpoint — editing is deliberately out of scope",
+      "steps": [
+        "Create a note as a user and capture its id",
+        "PUT /api/notes/<id> with a valid bearer token and body {\"body\":\"edited\"}",
+        "PATCH /api/notes/<id> with the same token and body {\"body\":\"edited\"}"
+      ],
+      "expected": "Both return 404 with error == \"not_found\" (no such endpoint); the stored note's body is still the original text and updated_at is unchanged"
+    }
+  ],
+  "gaps": [
+    "AS-04 (soft delete is recoverable by an operator) can only be verified by inspecting the MongoDB document directly — TC-33/TC-34 assert the surviving deleted_at, but the contract exposes no restore endpoint to test recovery end to end.",
+    "BR-07's concurrency guarantee (the unique index deciding a race between two simultaneous registrations of the same email) is not covered by a test case, because the runner issues requests sequentially; TC-02 covers only the sequential 409 path.",
+    "BR-08's timing-equivalence half (the dummy bcrypt compare making unknown-email and wrong-password indistinguishable in response time) is not asserted — TC-08 verifies only that the status and body are identical, since wall-clock timing is too noisy for a deterministic assertion.",
+    "No frontend artifacts were provided, so no UI-level tests exist for the React client described in the diagram (token storage, list rendering, compose box)."
+  ]
+}

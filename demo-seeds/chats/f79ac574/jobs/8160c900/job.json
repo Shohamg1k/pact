@@ -1,0 +1,11 @@
+{
+  "id": "8160c900",
+  "role": "docs",
+  "status": "passed",
+  "adapter": "claude-code",
+  "startedAt": "2026-08-22T00:01:49.337Z",
+  "endedAt": "2026-08-22T00:04:38.449Z",
+  "hash": "sha256:de1072b60a09a2d893348363f12e7fe45b07286ba513775ce69eb91f8216fe03",
+  "gaps": [],
+  "savedTokens": 0
+}

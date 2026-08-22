@@ -34,6 +34,7 @@ import { exportMiro } from './connectors/miro.js';
 import { exportSlack } from './connectors/slack.js';
 import { buildFrontendBundle, previewDocument } from './preview/frontend.js';
 import { buildTesterDocument } from './preview/tester.js';
+import { installDemoSeedsIfEmpty } from './demoSeeds.js';
 
 const app = express();
 app.use(cors());
@@ -103,8 +104,23 @@ app.get('/api/chats/:id', async (req, res) => {
   const artifacts = await listArtifacts(req.params.id);
   const summary = Object.fromEntries(Object.entries(artifacts).map(([role, a]) => [role, { gaps: a.gaps ?? [] }]));
   // `preview` tells the workbench whether the generated backend is actually live, so the
-  // API console and Live Preview tab can say so instead of failing opaquely.
-  const preview = getPreview(req.params.id);
+  // API console and Live Preview tab can say so instead of failing opaquely. Previews
+  // are in-memory (PRD UI-5) and die with every daemon restart, which used to mean
+  // opening an already-generated chat silently showed a dead backend until the user
+  // found and clicked the "start" status-bar item — indistinguishable from "broken" on
+  // first look. Auto-starting here (only when a backend artifact exists and nothing is
+  // live yet) trades a few seconds of extra latency on that one load for never showing
+  // a false negative. A boot failure here is reported the same way runner.js always
+  // reports one (P4 partial) — this chat load must never fail because of it.
+  let preview = getPreview(req.params.id);
+  if (!preview && summary.backend) {
+    try {
+      await startPreviewForChat(req.params.id);
+      preview = getPreview(req.params.id);
+    } catch {
+      /* no live backend to show is still a valid, honest response */
+    }
+  }
   // VER-4: contracttests.json is written once by orchestrator.js right after the preview
   // boots (reporting, not blocking — §28 Q2); only the pass/fail counts belong on this
   // summary route, the full per-test results live at GET .../contracttests below.
@@ -437,6 +453,12 @@ app.get('/api/adapters', (_req, res) => {
 });
 
 app.get('/api/usage', (_req, res) => res.json({ providers: usageSnapshot() }));
+
+installDemoSeedsIfEmpty(process.cwd())
+  .then((r) => {
+    if (r.installed) console.log('[pact] installed demo seeds (first run, no chats existed yet)');
+  })
+  .catch((e) => console.error('[pact] demo seed install failed (non-fatal):', e.message));
 
 const PORT = process.env.PACT_PORT || 4300;
 probeAll()

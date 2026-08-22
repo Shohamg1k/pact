@@ -1,0 +1,4 @@
+{"ts":1787356301814,"phase":"chat","event":"created","detail":{}}
+{"ts":1787357101115,"phase":"chat","event":"created","detail":{}}
+{"ts":1787357101119,"phase":"architect","event":"committed","detail":{"jobId":"0d942063","hash":"sha256:9236bd48218a62bfc210c484757eb9d05bd22b9b4927336411b70d5c6d4f52b0","gaps":[],"savedTokens":0}}
+{"ts":1787357101122,"phase":"backend","event":"committed","detail":{"jobId":"77eb1e7f","hash":"sha256:575f7a0c0f7010b0a3af95400d2dbbe9cfe83e13a38cbce018d3116ba46ed464","gaps":["BR-01/AS-04: no identity provider is named for issuing the bearer token, so middleware/auth.js verifies with HS256 when JWT_SECRET is set, and otherwise falls back to accepting any structurally valid unexpired token carrying employee_id and role — the same documented posture as the notes-api demo project."],"savedTokens":0}}

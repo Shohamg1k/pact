@@ -1,0 +1,12 @@
+{"ts":1787356301566,"phase":"chat","event":"created","detail":{}}
+{"ts":1787356374516,"phase":"architect","adapter":"claude-code","event":"call","detail":{"ok":true}}
+{"ts":1787356374539,"phase":"architect","event":"committed","detail":{"jobId":"61541f95","hash":"sha256:fadf4d1ddd59a9ffce933f9f8a664604c24cf29c2f0ed8e38aaa7e5ebc966ba2","gaps":["UNDERSPECIFIED: proceeding with every low-confidence assumption flagged"],"savedTokens":0}}
+{"ts":1787356593400,"phase":"backend","adapter":"claude-code","event":"call","detail":{"ok":true}}
+{"ts":1787356593405,"phase":"backend","event":"repair","detail":{"jobId":"6ae6bd29","attempt":0,"errors":[{"code":"SCHEMA_INVALID","subject_id":"modules.2.kind","detail":"Invalid option: expected one of \"model\"|\"route\"|\"middleware\"|\"util\"|\"config\"|\"entry\"|\"test\"|\"migration\"|\"template\"|\"other\"","recoverable":true},{"code":"SCHEMA_INVALID","subject_id":"modules.4.kind","detail":"Invalid option: expected one of \"model\"|\"route\"|\"middleware\"|\"util\"|\"config\"|\"entry\"|\"test\"|\"migration\"|\"template\"|\"other\"","recoverable":true}]}}
+{"ts":1787356765550,"phase":"backend","adapter":"claude-code","event":"call","detail":{"ok":true}}
+{"ts":1787356786419,"phase":"backend","event":"committed","detail":{"jobId":"6ae6bd29","hash":"sha256:6192d26c1fc33e099dc932a39d39cc38410097f683bf80c55f198ae471b027ca","gaps":[],"savedTokens":0}}
+{"ts":1787356799640,"phase":"preview","event":"contract_tests","detail":{"total":6,"passed":6,"failed":0}}
+{"ts":1787356909310,"phase":"qa","adapter":"claude-code","event":"call","detail":{"ok":true}}
+{"ts":1787356909325,"phase":"qa","event":"committed","detail":{"jobId":"e0351a9b","hash":"sha256:85abb3e597770cc43824eefe85a3f0fc531535cc059de3959c8e8b1ea4be6df1","gaps":[],"savedTokens":0}}
+{"ts":1787357078437,"phase":"docs","adapter":"claude-code","event":"call","detail":{"ok":true}}
+{"ts":1787357078447,"phase":"docs","event":"committed","detail":{"jobId":"8160c900","hash":"sha256:de1072b60a09a2d893348363f12e7fe45b07286ba513775ce69eb91f8216fe03","gaps":[],"savedTokens":0}}

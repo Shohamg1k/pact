@@ -1,0 +1,13 @@
+{
+  "id": "77eb1e7f",
+  "role": "backend",
+  "status": "passed",
+  "adapter": "claude-code",
+  "startedAt": "2026-08-22T00:05:01.105Z",
+  "endedAt": "2026-08-22T00:05:01.105Z",
+  "hash": "sha256:575f7a0c0f7010b0a3af95400d2dbbe9cfe83e13a38cbce018d3116ba46ed464",
+  "gaps": [
+    "BR-01/AS-04: no identity provider is named for issuing the bearer token, so middleware/auth.js verifies with HS256 when JWT_SECRET is set, and otherwise falls back to accepting any structurally valid unexpired token carrying employee_id and role — the same documented posture as the notes-api demo project."
+  ],
+  "savedTokens": 0
+}

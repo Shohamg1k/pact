@@ -1,0 +1,63 @@
+{
+  "meta": {
+    "schema": "backend/v1",
+    "runId": "34933901",
+    "contractHash": "sha256:9236bd48218a62bfc210c484757eb9d05bd22b9b4927336411b70d5c6d4f52b0"
+  },
+  "server_entry": "server.js",
+  "package_json": {
+    "name": "leave-management-200",
+    "dependencies": {
+      "express": "^5.1.0",
+      "mongoose": "^8.9.5",
+      "jsonwebtoken": "^9.0.2"
+    }
+  },
+  "gaps": [
+    "BR-01/AS-04: no identity provider is named for issuing the bearer token, so middleware/auth.js verifies with HS256 when JWT_SECRET is set, and otherwise falls back to accepting any structurally valid unexpired token carrying employee_id and role — the same documented posture as the notes-api demo project."
+  ],
+  "modules": [
+    {
+      "path": "models/Employee.js",
+      "kind": "model",
+      "implements": [
+        "C-01"
+      ],
+      "code": "'use strict';\nconst mongoose = require('mongoose');\n\nconst employeeSchema = new mongoose.Schema({\n  name: { type: String, required: true },\n  email: { type: String, required: true, unique: true, lowercase: true },\n  role: { type: String, required: true, enum: ['employee', 'manager'] },\n  manager_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee', default: null },\n  leave_balance_days: { type: Number, required: true, default: 20 },\n  created_at: { type: Date, required: true, default: Date.now },\n});\n\nmodule.exports = mongoose.model('Employee', employeeSchema);\n"
+    },
+    {
+      "path": "models/LeaveRequest.js",
+      "kind": "model",
+      "implements": [
+        "C-02"
+      ],
+      "code": "'use strict';\nconst mongoose = require('mongoose');\n\nconst leaveRequestSchema = new mongoose.Schema({\n  employee_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee', required: true, index: true },\n  manager_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee', required: true, index: true },\n  start_date: { type: Date, required: true },\n  end_date: { type: Date, required: true },\n  days: { type: Number, required: true },\n  reason: { type: String, required: true, maxlength: 500 },\n  status: { type: String, required: true, enum: ['pending', 'approved', 'rejected'], default: 'pending', index: true },\n  decided_at: { type: Date, default: null },\n  created_at: { type: Date, required: true, default: Date.now },\n});\nleaveRequestSchema.index({ manager_id: 1, status: 1, created_at: -1 });\n\nmodule.exports = mongoose.model('LeaveRequest', leaveRequestSchema);\n"
+    },
+    {
+      "path": "middleware/auth.js",
+      "kind": "middleware",
+      "implements": [
+        "BR-01"
+      ],
+      "code": "'use strict';\nconst jwt = require('jsonwebtoken');\n\n// BR-01: every endpoint requires a valid bearer token. AS-04/BR-01 gap: no identity\n// provider is named for issuing it, so this verifies with HS256 when JWT_SECRET is\n// configured, and otherwise falls back to accepting any structurally valid, unexpired\n// token carrying employee_id and role — the shape of the token, not its origin.\nfunction auth(req, res, next) {\n  const header = req.headers.authorization || '';\n  const token = header.startsWith('Bearer ') ? header.slice(7) : null;\n  if (!token) return res.status(401).json({ error: 'unauthorized', message: 'missing Authorization header' });\n\n  try {\n    const secret = process.env.JWT_SECRET;\n    const payload = secret ? jwt.verify(token, secret) : jwt.decode(token);\n    if (!payload || !payload.employee_id || !payload.role) {\n      return res.status(401).json({ error: 'unauthorized', message: 'token missing employee_id/role' });\n    }\n    if (payload.exp && Date.now() >= payload.exp * 1000) {\n      return res.status(401).json({ error: 'unauthorized', message: 'token expired' });\n    }\n    req.employeeId = payload.employee_id;\n    req.role = payload.role;\n    next();\n  } catch {\n    return res.status(401).json({ error: 'unauthorized', message: 'invalid token' });\n  }\n}\n\nmodule.exports = auth;\n"
+    },
+    {
+      "path": "routes/leaveRequests.js",
+      "kind": "route",
+      "implements": [
+        "API-01",
+        "API-02",
+        "API-03",
+        "API-04",
+        "API-05"
+      ],
+      "code": "'use strict';\nconst express = require('express');\nconst mongoose = require('mongoose');\nconst Employee = require('../models/Employee');\nconst LeaveRequest = require('../models/LeaveRequest');\nconst auth = require('../middleware/auth');\n\nconst router = express.Router();\nconst MS_PER_DAY = 24 * 60 * 60 * 1000;\n\n// API-01 (BR-01, BR-03): submit a leave request.\nrouter.post('/leave-requests', auth, async (req, res) => {\n  const { start_date, end_date, reason } = req.body || {};\n  const start = new Date(start_date);\n  const end = new Date(end_date);\n  if (!start_date || !end_date || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) {\n    return res.status(422).json({ error: 'invalid_request', message: 'end_date must be on or after start_date' });\n  }\n  if (!reason || typeof reason !== 'string' || reason.length > 500) {\n    return res.status(422).json({ error: 'invalid_request', message: 'reason is required, max 500 chars' });\n  }\n\n  const employee = await Employee.findById(req.employeeId);\n  if (!employee) return res.status(401).json({ error: 'unauthorized', message: 'employee not found' });\n\n  const days = Math.round((end - start) / MS_PER_DAY) + 1;\n  const doc = await LeaveRequest.create({\n    employee_id: employee._id,\n    manager_id: employee.manager_id,\n    start_date: start,\n    end_date: end,\n    days,\n    reason,\n    status: 'pending',\n  });\n  res.status(201).json({ id: doc._id, status: doc.status, days: doc.days });\n});\n\n// API-02 (BR-01, BR-02): list requests scoped to the caller — an employee sees their\n// own, a manager additionally sees requests routed to them.\nrouter.get('/leave-requests', auth, async (req, res) => {\n  const { status } = req.query;\n  const filter = { $or: [{ employee_id: req.employeeId }] };\n  if (req.role === 'manager') filter.$or.push({ manager_id: req.employeeId });\n  if (status) filter.status = status;\n\n  const items = await LeaveRequest.find(filter).sort({ created_at: -1 }).lean();\n  res.json({ items });\n});\n\nasync function decide(req, res, nextStatus) {\n  const request = await LeaveRequest.findById(req.params.id);\n  if (!request) return res.status(404).json({ error: 'not_found' });\n\n  // BR-02/BR-06: only the named manager may decide, and never their own request.\n  if (String(request.manager_id) !== String(req.employeeId) || String(request.employee_id) === String(req.employeeId)) {\n    return res.status(401).json({ error: 'unauthorized', message: 'not this request\\'s manager' });\n  }\n  // BR-04: only a pending request can be decided.\n  if (request.status !== 'pending') {\n    return res.status(409).json({ error: 'already_decided', message: `request is already ${request.status}` });\n  }\n\n  if (nextStatus === 'approved') {\n    // BR-05: an approval that would overdraw the balance is refused, atomically —\n    // the balance check and decrement happen in one conditional update so a race\n    // between two approvals can't double-spend the same days.\n    const employee = await Employee.findOneAndUpdate(\n      { _id: request.employee_id, leave_balance_days: { $gte: request.days } },\n      { $inc: { leave_balance_days: -request.days } },\n      { new: true },\n    );\n    if (!employee) return res.status(409).json({ error: 'insufficient_balance' });\n    request.status = 'approved';\n    request.decided_at = new Date();\n    await request.save();\n    return res.json({ id: request._id, status: request.status, employee_balance_days: employee.leave_balance_days });\n  }\n\n  request.status = 'rejected';\n  request.decided_at = new Date();\n  await request.save();\n  res.json({ id: request._id, status: request.status });\n}\n\n// API-03 (BR-04, BR-05, BR-06)\nrouter.patch('/leave-requests/:id/approve', auth, (req, res) => decide(req, res, 'approved').catch((e) => res.status(400).json({ error: 'bad_request', message: e.message })));\n// API-04 (BR-04, BR-06)\nrouter.patch('/leave-requests/:id/reject', auth, (req, res) => decide(req, res, 'rejected').catch((e) => res.status(400).json({ error: 'bad_request', message: e.message })));\n\n// API-05 (BR-02)\nrouter.get('/leave-balance', auth, async (req, res) => {\n  const employee = await Employee.findById(req.employeeId).lean();\n  if (!employee) return res.status(401).json({ error: 'unauthorized' });\n  res.json({ employee_id: employee._id, leave_balance_days: employee.leave_balance_days });\n});\n\nmodule.exports = router;\n"
+    },
+    {
+      "path": "server.js",
+      "kind": "entry",
+      "implements": [],
+      "code": "'use strict';\nconst express = require('express');\nconst mongoose = require('mongoose');\nconst leaveRequestsRouter = require('./routes/leaveRequests');\n\nconst app = express();\napp.use(express.json());\n\napp.get('/__health', (_req, res) => res.json({ ok: true }));\napp.use('/api', leaveRequestsRouter);\n\nconst port = process.env.PORT;\nconst mongoUrl = process.env.MONGO_URL;\nif (!mongoUrl) throw new Error('MONGO_URL is not set');\n\nmongoose.connect(mongoUrl).then(() => {\n  app.listen(port, () => console.log(`leave-management-200 listening on ${port}`));\n});\n"
+    }
+  ]
+}

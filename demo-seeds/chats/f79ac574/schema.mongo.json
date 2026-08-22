@@ -1,0 +1,30 @@
+{
+  "schema": "schema.mongo/v1",
+  "collections": [
+    {
+      "id": "C-01",
+      "name": "users",
+      "fields": [
+        "_id ObjectId primary key",
+        "email string required unique lowercase indexed",
+        "password_hash string required bcrypt",
+        "display_name string optional max 80",
+        "created_at Date required default now"
+      ]
+    },
+    {
+      "id": "C-02",
+      "name": "notes",
+      "fields": [
+        "_id ObjectId primary key",
+        "owner_id ObjectId required ref:users indexed",
+        "title string optional max 200 trimmed",
+        "body string required min 1 max 10000 trimmed",
+        "created_at Date required default now",
+        "updated_at Date required default now",
+        "deleted_at Date nullable default null",
+        "compound index (owner_id, deleted_at, created_at desc)"
+      ]
+    }
+  ]
+}

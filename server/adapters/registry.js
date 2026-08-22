@@ -16,7 +16,14 @@
 
 export const CLAUDE_CFG = {
   bin: 'claude',
-  args: ['-p', '--output-format', 'text'],
+  // Pinned to a specific fast model rather than whatever the CLI's ambient default
+  // happens to be — a live Backend generation for anything beyond a trivial contract
+  // was observed taking 6+ minutes (once the full 15-minute timeout) with no explicit
+  // model/effort flag. Sonnet 5 is fast and capable enough for generated CRUD backends;
+  // --effort medium trades a little of the highest-end reasoning depth for materially
+  // faster responses, which matters here since every agent role is bounded by the same
+  // 15-minute CLI timeout with no failover target configured on this machine.
+  args: ['-p', '--output-format', 'text', '--model', 'claude-sonnet-5', '--effort', 'medium'],
   promptVia: 'stdin',
 };
 

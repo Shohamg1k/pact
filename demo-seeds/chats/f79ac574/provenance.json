@@ -1,0 +1,513 @@
+{
+  "artifact": "multi-role",
+  "entries": [
+    {
+      "element_path": "/backend/modules/0",
+      "traced_from": "C-01"
+    },
+    {
+      "element_path": "/backend/modules/0",
+      "traced_from": "F-01"
+    },
+    {
+      "element_path": "/backend/modules/1",
+      "traced_from": "C-02"
+    },
+    {
+      "element_path": "/backend/modules/1",
+      "traced_from": "F-02"
+    },
+    {
+      "element_path": "/backend/modules/1",
+      "traced_from": "F-03"
+    },
+    {
+      "element_path": "/backend/modules/1",
+      "traced_from": "F-04"
+    },
+    {
+      "element_path": "/backend/modules/2",
+      "traced_from": "BR-01"
+    },
+    {
+      "element_path": "/backend/modules/2",
+      "traced_from": "F-01"
+    },
+    {
+      "element_path": "/backend/modules/3",
+      "traced_from": "BR-04"
+    },
+    {
+      "element_path": "/backend/modules/3",
+      "traced_from": "BR-09"
+    },
+    {
+      "element_path": "/backend/modules/3",
+      "traced_from": "BR-07"
+    },
+    {
+      "element_path": "/backend/modules/4",
+      "traced_from": "BR-01"
+    },
+    {
+      "element_path": "/backend/modules/4",
+      "traced_from": "BR-02"
+    },
+    {
+      "element_path": "/backend/modules/5",
+      "traced_from": "API-01"
+    },
+    {
+      "element_path": "/backend/modules/5",
+      "traced_from": "API-02"
+    },
+    {
+      "element_path": "/backend/modules/5",
+      "traced_from": "F-01"
+    },
+    {
+      "element_path": "/backend/modules/5",
+      "traced_from": "C-01"
+    },
+    {
+      "element_path": "/backend/modules/5",
+      "traced_from": "BR-07"
+    },
+    {
+      "element_path": "/backend/modules/5",
+      "traced_from": "BR-08"
+    },
+    {
+      "element_path": "/backend/modules/6",
+      "traced_from": "API-03"
+    },
+    {
+      "element_path": "/backend/modules/6",
+      "traced_from": "API-04"
+    },
+    {
+      "element_path": "/backend/modules/6",
+      "traced_from": "API-05"
+    },
+    {
+      "element_path": "/backend/modules/6",
+      "traced_from": "API-06"
+    },
+    {
+      "element_path": "/backend/modules/6",
+      "traced_from": "F-02"
+    },
+    {
+      "element_path": "/backend/modules/6",
+      "traced_from": "F-03"
+    },
+    {
+      "element_path": "/backend/modules/6",
+      "traced_from": "F-04"
+    },
+    {
+      "element_path": "/backend/modules/6",
+      "traced_from": "C-02"
+    },
+    {
+      "element_path": "/backend/modules/6",
+      "traced_from": "BR-01"
+    },
+    {
+      "element_path": "/backend/modules/6",
+      "traced_from": "BR-02"
+    },
+    {
+      "element_path": "/backend/modules/6",
+      "traced_from": "BR-03"
+    },
+    {
+      "element_path": "/backend/modules/6",
+      "traced_from": "BR-04"
+    },
+    {
+      "element_path": "/backend/modules/6",
+      "traced_from": "BR-05"
+    },
+    {
+      "element_path": "/backend/modules/6",
+      "traced_from": "BR-06"
+    },
+    {
+      "element_path": "/backend/modules/6",
+      "traced_from": "BR-09"
+    },
+    {
+      "element_path": "/backend/modules/7",
+      "traced_from": "API-01"
+    },
+    {
+      "element_path": "/backend/modules/7",
+      "traced_from": "API-02"
+    },
+    {
+      "element_path": "/backend/modules/7",
+      "traced_from": "API-03"
+    },
+    {
+      "element_path": "/backend/modules/7",
+      "traced_from": "API-04"
+    },
+    {
+      "element_path": "/backend/modules/7",
+      "traced_from": "API-05"
+    },
+    {
+      "element_path": "/backend/modules/7",
+      "traced_from": "API-06"
+    },
+    {
+      "element_path": "/backend/modules/7",
+      "traced_from": "C-01"
+    },
+    {
+      "element_path": "/backend/modules/7",
+      "traced_from": "C-02"
+    },
+    {
+      "element_path": "/qa/test_cases/0",
+      "traced_from": "API-01"
+    },
+    {
+      "element_path": "/qa/test_cases/0",
+      "traced_from": "F-01"
+    },
+    {
+      "element_path": "/qa/test_cases/0",
+      "traced_from": "C-01"
+    },
+    {
+      "element_path": "/qa/test_cases/1",
+      "traced_from": "API-01"
+    },
+    {
+      "element_path": "/qa/test_cases/1",
+      "traced_from": "BR-07"
+    },
+    {
+      "element_path": "/qa/test_cases/2",
+      "traced_from": "API-01"
+    },
+    {
+      "element_path": "/qa/test_cases/2",
+      "traced_from": "AS-07"
+    },
+    {
+      "element_path": "/qa/test_cases/3",
+      "traced_from": "API-01"
+    },
+    {
+      "element_path": "/qa/test_cases/3",
+      "traced_from": "C-01"
+    },
+    {
+      "element_path": "/qa/test_cases/4",
+      "traced_from": "API-01"
+    },
+    {
+      "element_path": "/qa/test_cases/4",
+      "traced_from": "AS-07"
+    },
+    {
+      "element_path": "/qa/test_cases/4",
+      "traced_from": "C-01"
+    },
+    {
+      "element_path": "/qa/test_cases/5",
+      "traced_from": "API-02"
+    },
+    {
+      "element_path": "/qa/test_cases/5",
+      "traced_from": "F-01"
+    },
+    {
+      "element_path": "/qa/test_cases/6",
+      "traced_from": "API-02"
+    },
+    {
+      "element_path": "/qa/test_cases/6",
+      "traced_from": "BR-08"
+    },
+    {
+      "element_path": "/qa/test_cases/7",
+      "traced_from": "API-02"
+    },
+    {
+      "element_path": "/qa/test_cases/7",
+      "traced_from": "BR-08"
+    },
+    {
+      "element_path": "/qa/test_cases/8",
+      "traced_from": "API-02"
+    },
+    {
+      "element_path": "/qa/test_cases/9",
+      "traced_from": "API-03"
+    },
+    {
+      "element_path": "/qa/test_cases/9",
+      "traced_from": "F-02"
+    },
+    {
+      "element_path": "/qa/test_cases/9",
+      "traced_from": "C-02"
+    },
+    {
+      "element_path": "/qa/test_cases/10",
+      "traced_from": "API-03"
+    },
+    {
+      "element_path": "/qa/test_cases/10",
+      "traced_from": "AS-02"
+    },
+    {
+      "element_path": "/qa/test_cases/11",
+      "traced_from": "API-03"
+    },
+    {
+      "element_path": "/qa/test_cases/11",
+      "traced_from": "BR-01"
+    },
+    {
+      "element_path": "/qa/test_cases/12",
+      "traced_from": "API-03"
+    },
+    {
+      "element_path": "/qa/test_cases/12",
+      "traced_from": "BR-01"
+    },
+    {
+      "element_path": "/qa/test_cases/13",
+      "traced_from": "API-03"
+    },
+    {
+      "element_path": "/qa/test_cases/13",
+      "traced_from": "BR-01"
+    },
+    {
+      "element_path": "/qa/test_cases/13",
+      "traced_from": "AS-07"
+    },
+    {
+      "element_path": "/qa/test_cases/14",
+      "traced_from": "API-03"
+    },
+    {
+      "element_path": "/qa/test_cases/14",
+      "traced_from": "BR-02"
+    },
+    {
+      "element_path": "/qa/test_cases/15",
+      "traced_from": "API-03"
+    },
+    {
+      "element_path": "/qa/test_cases/15",
+      "traced_from": "BR-04"
+    },
+    {
+      "element_path": "/qa/test_cases/16",
+      "traced_from": "API-03"
+    },
+    {
+      "element_path": "/qa/test_cases/16",
+      "traced_from": "BR-04"
+    },
+    {
+      "element_path": "/qa/test_cases/17",
+      "traced_from": "API-03"
+    },
+    {
+      "element_path": "/qa/test_cases/17",
+      "traced_from": "BR-04"
+    },
+    {
+      "element_path": "/qa/test_cases/17",
+      "traced_from": "C-02"
+    },
+    {
+      "element_path": "/qa/test_cases/18",
+      "traced_from": "API-03"
+    },
+    {
+      "element_path": "/qa/test_cases/18",
+      "traced_from": "C-02"
+    },
+    {
+      "element_path": "/qa/test_cases/19",
+      "traced_from": "API-04"
+    },
+    {
+      "element_path": "/qa/test_cases/19",
+      "traced_from": "F-03"
+    },
+    {
+      "element_path": "/qa/test_cases/19",
+      "traced_from": "BR-09"
+    },
+    {
+      "element_path": "/qa/test_cases/20",
+      "traced_from": "API-04"
+    },
+    {
+      "element_path": "/qa/test_cases/20",
+      "traced_from": "BR-03"
+    },
+    {
+      "element_path": "/qa/test_cases/21",
+      "traced_from": "API-04"
+    },
+    {
+      "element_path": "/qa/test_cases/21",
+      "traced_from": "BR-05"
+    },
+    {
+      "element_path": "/qa/test_cases/22",
+      "traced_from": "API-04"
+    },
+    {
+      "element_path": "/qa/test_cases/22",
+      "traced_from": "BR-01"
+    },
+    {
+      "element_path": "/qa/test_cases/23",
+      "traced_from": "API-04"
+    },
+    {
+      "element_path": "/qa/test_cases/23",
+      "traced_from": "BR-09"
+    },
+    {
+      "element_path": "/qa/test_cases/24",
+      "traced_from": "API-04"
+    },
+    {
+      "element_path": "/qa/test_cases/24",
+      "traced_from": "BR-09"
+    },
+    {
+      "element_path": "/qa/test_cases/25",
+      "traced_from": "API-04"
+    },
+    {
+      "element_path": "/qa/test_cases/25",
+      "traced_from": "BR-09"
+    },
+    {
+      "element_path": "/qa/test_cases/26",
+      "traced_from": "API-04"
+    },
+    {
+      "element_path": "/qa/test_cases/26",
+      "traced_from": "BR-09"
+    },
+    {
+      "element_path": "/qa/test_cases/26",
+      "traced_from": "F-03"
+    },
+    {
+      "element_path": "/qa/test_cases/27",
+      "traced_from": "API-05"
+    },
+    {
+      "element_path": "/qa/test_cases/27",
+      "traced_from": "F-03"
+    },
+    {
+      "element_path": "/qa/test_cases/28",
+      "traced_from": "API-05"
+    },
+    {
+      "element_path": "/qa/test_cases/28",
+      "traced_from": "BR-03"
+    },
+    {
+      "element_path": "/qa/test_cases/29",
+      "traced_from": "API-05"
+    },
+    {
+      "element_path": "/qa/test_cases/29",
+      "traced_from": "BR-05"
+    },
+    {
+      "element_path": "/qa/test_cases/30",
+      "traced_from": "API-05"
+    },
+    {
+      "element_path": "/qa/test_cases/30",
+      "traced_from": "BR-03"
+    },
+    {
+      "element_path": "/qa/test_cases/31",
+      "traced_from": "API-05"
+    },
+    {
+      "element_path": "/qa/test_cases/31",
+      "traced_from": "BR-01"
+    },
+    {
+      "element_path": "/qa/test_cases/32",
+      "traced_from": "API-06"
+    },
+    {
+      "element_path": "/qa/test_cases/32",
+      "traced_from": "F-04"
+    },
+    {
+      "element_path": "/qa/test_cases/32",
+      "traced_from": "BR-05"
+    },
+    {
+      "element_path": "/qa/test_cases/33",
+      "traced_from": "API-06"
+    },
+    {
+      "element_path": "/qa/test_cases/33",
+      "traced_from": "BR-06"
+    },
+    {
+      "element_path": "/qa/test_cases/34",
+      "traced_from": "API-06"
+    },
+    {
+      "element_path": "/qa/test_cases/34",
+      "traced_from": "BR-06"
+    },
+    {
+      "element_path": "/qa/test_cases/35",
+      "traced_from": "API-06"
+    },
+    {
+      "element_path": "/qa/test_cases/35",
+      "traced_from": "BR-03"
+    },
+    {
+      "element_path": "/qa/test_cases/36",
+      "traced_from": "API-06"
+    },
+    {
+      "element_path": "/qa/test_cases/36",
+      "traced_from": "BR-01"
+    },
+    {
+      "element_path": "/qa/test_cases/37",
+      "traced_from": "API-03"
+    },
+    {
+      "element_path": "/qa/test_cases/37",
+      "traced_from": "AS-02"
+    },
+    {
+      "element_path": "/qa/test_cases/38",
+      "traced_from": "AS-03"
+    },
+    {
+      "element_path": "/qa/test_cases/38",
+      "traced_from": "F-02"
+    }
+  ]
+}

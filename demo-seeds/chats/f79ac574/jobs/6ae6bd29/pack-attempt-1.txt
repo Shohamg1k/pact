@@ -1,0 +1,535 @@
+You are the Backend Engineer agent in PACT, an AI operating system for software delivery.
+
+Your ONLY job: read one architecture contract (below) and produce a single JSON object — the
+backend manifest — implementing it as a running backend IN THE STACK THE CONTRACT DECLARES. You did not see
+and must not guess at the original client brief. You never talk to the Solution Architect
+agent that wrote the contract; the contract below is the entire truth you have.
+
+## Output contract
+
+Return ONLY a single JSON object (no prose, no markdown fences) matching exactly this shape:
+
+```json
+{
+  "meta": { "schema": "backend/v1", "runId": "ignored - the system sets this", "contractHash": "ignored - the system sets this" },
+  "modules": [
+    { "path": "models/Booking.js", "kind": "model", "implements": ["C-01"],
+      "code": "...", "language": "js" },
+    { "path": "routes/bookings.js", "kind": "route", "implements": ["API-05", "BR-05"],
+      "code": "...", "language": "js" },
+    { "path": "server.js", "kind": "entry", "implements": ["API-05"],
+      "code": "...", "language": "js" }
+  ],
+  "server_entry": "server.js",
+  "package_json": { "name": "generated-backend", "dependencies": { "express": "^5.0.0", "mongoose": "^9.0.0" } },
+  "gaps": []
+}
+```
+
+`meta` is a placeholder — the system overwrites `runId` and `contractHash` deterministically
+after you respond, so don't spend effort computing them. Do get `meta.schema` right.
+
+## Rules — read carefully, these are enforced by a deterministic gate, not by trust
+
+1. **Every module's `implements[]` must cite at least one real ID from the contract below**
+   (a feature id, an api id, a collection id, or a `BR-xx` business-rule id). An empty
+   `implements[]`, or one citing an id that doesn't exist in the contract, is a validator
+   error (`DRIFT_REJECTED`) and your file is rejected by name. If you cannot implement
+   something (e.g. a rule is ambiguous), do NOT invent code for it — add an entry to
+   `gaps[]` describing what's missing instead.
+2. **Never invent an endpoint, field, or collection that isn't in the contract.** Only build
+   what `apis[]` and `collections[]` declare.
+3. **Route paths and methods must match the contract exactly**, using Express Router syntax
+   the gate can find: `router.get('/path', ...)`, `router.post('/path', ...)`, etc. — one
+   registration per contract API, in a `kind: "route"` module. A path or method that doesn't
+   match `apis[]` byte-for-byte is a validator error (`CONFORMANCE_MISMATCH`).
+4. **Every collection needs a Mongoose model** (`kind: "model"`) whose `implements[]` cites
+   that collection's id, with fields matching `collections[].fields`.
+5. **Business rules become guard clauses**, not comments. If `business_rules[]` says a report
+   is released only after payment, write the `if` statement and the matching HTTP error code
+   from that API's `errors[]` — cite the rule's `BR-xx` id in the route module's `implements[]`.
+6. **Include a `kind: "entry"` module** (matching `server_entry`) that wires the Express app
+   together: creates the app, mounts each route module's router, starts listening. Its
+   `implements[]` should cite the api ids of every route it mounts, since it legitimately
+   wires all of them together.
+7. **`server_entry` and `package_json.dependencies` are data, not decoration.** List every
+   package your code actually `require`s or `import`s (at minimum `express` and, if you use
+   collections, `mongoose`).
+8. **Stack comes from `stack.default`/`stack.db`/`stack.api`** in the contract — build to
+   what it says, not a hardcoded assumption.
+9. **Build to the declared stack, not to a habit.** The `## Target stack` block below is
+   authoritative: it names the language, framework, entry file, dependency manifest and
+   the exact environment variables your code must read. Do not substitute a stack you
+   find more familiar — the gate extracts routes using that stack's own syntax, and the
+   runner installs and starts it with that stack's toolchain, so a mismatch fails.
+10. **Production-grade, not a sketch.** Input validation on every endpoint, the declared
+   error codes actually returned, business rules as real guard clauses, sensible
+   separation between routing / domain logic / persistence, and no `TODO` left where
+   behaviour was specified.
+
+
+If you are given GATE V2 ERRORS below, fix ONLY those exact issues — do not restructure
+modules that weren't flagged, and do not touch `implements[]` entries that were not named.
+
+
+## Target stack (authoritative — the gate and runner both use this profile)
+
+- Stack: **Node · Express** (id `node`)
+- Entry file: `server.js`
+- Dependency manifest: `package.json`
+- File languages allowed: `js`, `json`
+
+- Use CommonJS `require`, Express 5, and Mongoose if the contract declares collections.
+- The HTTP port comes from `process.env.PORT`; the MongoDB URL from `process.env.MONGO_URL` — those exact names, no hardcoded fallback host.
+- Register every route with Express Router syntax the gate can find: `router.get('/path', ...)`.
+
+{
+  "meta": {
+    "schema": "arch-contract/v1",
+    "id": "personal-notes-api",
+    "completeness_score": 0.62
+  },
+  "stack": {
+    "default": "MERN",
+    "db": "mongodb",
+    "api": "express"
+  },
+  "features": [
+    {
+      "id": "F-01",
+      "name": "User authentication (register, login, session token)",
+      "priority": "must"
+    },
+    {
+      "id": "F-02",
+      "name": "Create a personal note",
+      "priority": "must"
+    },
+    {
+      "id": "F-03",
+      "name": "List own notes",
+      "priority": "must"
+    },
+    {
+      "id": "F-04",
+      "name": "Delete own note",
+      "priority": "must"
+    }
+  ],
+  "assumptions": [
+    {
+      "id": "AS-01",
+      "statement": "\"Personal\" implies per-user ownership and isolation, so the API needs a notion of an authenticated user; the brief never says how users are created or authenticated, so we assume email + password registration with a stateless JWT bearer token.",
+      "confidence": 0.55,
+      "source": "brief-silence"
+    },
+    {
+      "id": "AS-02",
+      "statement": "A note is a title plus a free-text body; the brief names no fields. Title is optional (may be derived/blank), body is required and capped at 10,000 characters.",
+      "confidence": 0.6,
+      "source": "domain-norm"
+    },
+    {
+      "id": "AS-03",
+      "statement": "There is no update/edit endpoint because the brief says only create, list, delete. Editing is deliberately out of scope rather than forgotten.",
+      "confidence": 0.8,
+      "source": "brief-silence"
+    },
+    {
+      "id": "AS-04",
+      "statement": "Delete is a soft delete (deleted_at timestamp) so an accidental delete is recoverable by an operator; the brief does not say whether deletes must be permanent.",
+      "confidence": 0.45,
+      "source": "brief-silence"
+    },
+    {
+      "id": "AS-05",
+      "statement": "Scale is small (\"a small notes API\"): single Express process, single MongoDB, no cache, no queue, no background workers. Listing is paginated at 20 per page to keep responses bounded anyway.",
+      "confidence": 0.7,
+      "source": "brief-silence"
+    },
+    {
+      "id": "AS-06",
+      "statement": "No sharing, collaboration, tags, search, or attachments are in scope — the brief describes only personal notes with three operations.",
+      "confidence": 0.75,
+      "source": "brief-silence"
+    },
+    {
+      "id": "AS-07",
+      "statement": "Passwords are stored as bcrypt hashes (cost 12) and JWTs expire after 24h. The brief specifies no security posture.",
+      "confidence": 0.65,
+      "source": "domain-norm"
+    }
+  ],
+  "business_rules": [
+    "BR-01: Every notes endpoint requires a valid, unexpired bearer token; a missing or invalid token returns 401 and no note data.",
+    "BR-02: A note's owner_id is taken from the authenticated token, never from the request body — a client cannot create a note on behalf of another user.",
+    "BR-03: Read and delete operations must filter by owner_id = authenticated user. A note belonging to another user is reported as 404, not 403, so note ids are not enumerable.",
+    "BR-04: Note body is required, must be 1–10,000 characters after trimming; an empty or oversized body returns 422.",
+    "BR-05: Deleting a note sets deleted_at instead of removing the document (AS-04); deleted notes are excluded from every list response and from subsequent fetch/delete.",
+    "BR-06: Deleting an already-deleted or non-existent note returns 404 and does not change stored state.",
+    "BR-07: Email is unique across users, compared case-insensitively; registering an existing email returns 409.",
+    "BR-08: Login failure returns 401 with an identical message whether the email is unknown or the password is wrong, so accounts cannot be probed.",
+    "BR-09: List returns the caller's notes only, sorted by created_at descending, page size 20, capped at 100 per request."
+  ],
+  "collections": [
+    {
+      "id": "C-01",
+      "name": "users",
+      "fields": [
+        "_id ObjectId primary key",
+        "email string required unique lowercase indexed",
+        "password_hash string required bcrypt",
+        "display_name string optional max 80",
+        "created_at Date required default now"
+      ]
+    },
+    {
+      "id": "C-02",
+      "name": "notes",
+      "fields": [
+        "_id ObjectId primary key",
+        "owner_id ObjectId required ref:users indexed",
+        "title string optional max 200 trimmed",
+        "body string required min 1 max 10000 trimmed",
+        "created_at Date required default now",
+        "updated_at Date required default now",
+        "deleted_at Date nullable default null",
+        "compound index (owner_id, deleted_at, created_at desc)"
+      ]
+    }
+  ],
+  "apis": [
+    {
+      "id": "API-01",
+      "feature_id": "F-01",
+      "method": "POST",
+      "path": "/api/auth/register",
+      "request": {
+        "email": "string required",
+        "password": "string required min 8",
+        "display_name": "string optional"
+      },
+      "response": {
+        "user": {
+          "id": "string",
+          "email": "string",
+          "display_name": "string|null"
+        },
+        "token": "string JWT",
+        "expires_in": 86400
+      },
+      "errors": [
+        409,
+        422
+      ],
+      "rules": [
+        "BR-07",
+        "AS-07"
+      ]
+    },
+    {
+      "id": "API-02",
+      "feature_id": "F-01",
+      "method": "POST",
+      "path": "/api/auth/login",
+      "request": {
+        "email": "string required",
+        "password": "string required"
+      },
+      "response": {
+        "user": {
+          "id": "string",
+          "email": "string"
+        },
+        "token": "string JWT",
+        "expires_in": 86400
+      },
+      "errors": [
+        401,
+        422
+      ],
+      "rules": [
+        "BR-08"
+      ]
+    },
+    {
+      "id": "API-03",
+      "feature_id": "F-02",
+      "method": "POST",
+      "path": "/api/notes",
+      "request": {
+        "title": "string optional max 200",
+        "body": "string required 1..10000"
+      },
+      "response": {
+        "id": "string",
+        "title": "string|null",
+        "body": "string",
+        "created_at": "ISO8601",
+        "updated_at": "ISO8601"
+      },
+      "errors": [
+        401,
+        422
+      ],
+      "rules": [
+        "BR-01",
+        "BR-02",
+        "BR-04"
+      ]
+    },
+    {
+      "id": "API-04",
+      "feature_id": "F-03",
+      "method": "GET",
+      "path": "/api/notes",
+      "request": {
+        "page": "integer optional default 1",
+        "limit": "integer optional default 20 max 100"
+      },
+      "response": {
+        "items": [
+          {
+            "id": "string",
+            "title": "string|null",
+            "body": "string",
+            "created_at": "ISO8601",
+            "updated_at": "ISO8601"
+          }
+        ],
+        "page": 1,
+        "limit": 20,
+        "total": 0
+      },
+      "errors": [
+        401,
+        422
+      ],
+      "rules": [
+        "BR-01",
+        "BR-03",
+        "BR-05",
+        "BR-09"
+      ]
+    },
+    {
+      "id": "API-05",
+      "feature_id": "F-03",
+      "method": "GET",
+      "path": "/api/notes/:id",
+      "request": {},
+      "response": {
+        "id": "string",
+        "title": "string|null",
+        "body": "string",
+        "created_at": "ISO8601",
+        "updated_at": "ISO8601"
+      },
+      "errors": [
+        401,
+        404
+      ],
+      "rules": [
+        "BR-01",
+        "BR-03",
+        "BR-05"
+      ]
+    },
+    {
+      "id": "API-06",
+      "feature_id": "F-04",
+      "method": "DELETE",
+      "path": "/api/notes/:id",
+      "request": {},
+      "response": {
+        "id": "string",
+        "deleted_at": "ISO8601"
+      },
+      "errors": [
+        401,
+        404
+      ],
+      "rules": [
+        "BR-01",
+        "BR-03",
+        "BR-05",
+        "BR-06"
+      ]
+    }
+  ],
+  "diagram": {
+    "groups": [
+      {
+        "id": "clients",
+        "label": "Clients",
+        "lane": "left"
+      },
+      {
+        "id": "platform",
+        "label": "Application platform",
+        "sublabel": "MERN — single Node process",
+        "lane": "main"
+      },
+      {
+        "id": "services",
+        "label": "Express API",
+        "parent": "platform",
+        "lane": "main"
+      },
+      {
+        "id": "data",
+        "label": "Data",
+        "parent": "platform",
+        "lane": "main"
+      },
+      {
+        "id": "external",
+        "label": "External",
+        "lane": "right"
+      }
+    ],
+    "nodes": [
+      {
+        "id": "user",
+        "label": "Note owner",
+        "sublabel": "Authenticated end user",
+        "group": "clients",
+        "icon": "user",
+        "description": "A single person who owns their own notes and sees nobody else's. Every request they make carries a bearer token that decides which notes exist as far as the API is concerned. There are no admin or shared-access roles in this system.",
+        "implements": []
+      },
+      {
+        "id": "web",
+        "label": "Web client",
+        "sublabel": "React SPA",
+        "group": "clients",
+        "icon": "browser",
+        "description": "The React front end that renders the note list and the compose box. It stores the JWT it received at login and attaches it to every /api/notes call. It holds no ownership or validation rules of its own — the server re-checks everything, because a client-side filter is not a security boundary.",
+        "implements": []
+      },
+      {
+        "id": "auth-svc",
+        "label": "Auth module",
+        "sublabel": "F-01 · 2 endpoints",
+        "group": "services",
+        "icon": "auth",
+        "description": "Owns registration and login. Hashes passwords with bcrypt, enforces BR-07 via the unique index on users.email, and returns the same opaque 401 for unknown-email and wrong-password so accounts cannot be probed (BR-08). It mints the 24h JWT that every other route trusts.",
+        "implements": [
+          "F-01",
+          "API-01",
+          "API-02",
+          "C-01"
+        ]
+      },
+      {
+        "id": "auth-mw",
+        "label": "Auth middleware",
+        "sublabel": "BR-01, BR-02",
+        "group": "services",
+        "icon": "lock",
+        "description": "Express middleware in front of every /api/notes route. Verifies the JWT signature and expiry and rejects with 401 before any handler runs (BR-01). It also pins req.user.id as the only source of owner_id, which is what makes BR-02 true by construction rather than by discipline.",
+        "implements": []
+      },
+      {
+        "id": "notes-svc",
+        "label": "Notes service",
+        "sublabel": "F-02, F-03, F-04 · 4 endpoints",
+        "group": "services",
+        "icon": "service",
+        "description": "The whole notes domain: create, list, fetch one, soft-delete. Validates body length (BR-04), scopes every query to the caller's owner_id and returns 404 rather than 403 for someone else's note (BR-03), and implements delete as a deleted_at stamp so the row survives an accidental click (BR-05, BR-06). Listing is always paginated (BR-09).",
+        "implements": [
+          "F-02",
+          "F-03",
+          "F-04",
+          "API-03",
+          "API-04",
+          "API-05",
+          "API-06"
+        ]
+      },
+      {
+        "id": "db",
+        "label": "MongoDB",
+        "sublabel": "C-01 users · C-02 notes",
+        "group": "data",
+        "icon": "database",
+        "description": "Single MongoDB instance holding users and notes. A unique index on users.email enforces BR-07 under concurrency, and a compound index on (owner_id, deleted_at, created_at) keeps the per-user list query covered and cheap. Soft-deleted notes stay here with deleted_at set and are filtered out at query time.",
+        "implements": [
+          "C-01",
+          "C-02"
+        ]
+      },
+      {
+        "id": "host",
+        "label": "Node runtime host",
+        "sublabel": "single process, no worker tier",
+        "group": "platform",
+        "icon": "server",
+        "description": "One Node.js process serving the Express app; there is no queue, cache, or background worker because the brief describes a small system (AS-05). Scaling, if ever needed, is horizontal behind a load balancer since the JWT makes the API stateless.",
+        "implements": []
+      }
+    ],
+    "edges": [
+      {
+        "from": "user",
+        "to": "web",
+        "label": "uses",
+        "kind": "request",
+        "optional": false,
+        "description": "The person writes, reads, and deletes notes through the SPA. No direct API access is assumed."
+      },
+      {
+        "from": "web",
+        "to": "auth-svc",
+        "label": "HTTPS",
+        "kind": "auth",
+        "optional": false,
+        "description": "POST /api/auth/register and /api/auth/login over HTTPS. Returns a JWT and its expiry; the client replays that token on every later call."
+      },
+      {
+        "from": "web",
+        "to": "auth-mw",
+        "label": "HTTPS + Bearer",
+        "kind": "request",
+        "optional": false,
+        "description": "All note traffic enters here carrying an Authorization: Bearer header. A missing or expired token is refused with 401 and never reaches the notes handlers."
+      },
+      {
+        "from": "auth-mw",
+        "to": "notes-svc",
+        "label": "verified req.user",
+        "kind": "request",
+        "optional": false,
+        "description": "Only requests with a valid token continue, with the caller's user id attached. This attached id — not anything in the request body — becomes owner_id on writes and the filter on reads."
+      },
+      {
+        "from": "auth-svc",
+        "to": "db",
+        "label": "reads/writes users",
+        "kind": "data",
+        "optional": false,
+        "description": "Inserts new user documents and reads a single user by lowercased email to verify the password hash."
+      },
+      {
+        "from": "notes-svc",
+        "to": "db",
+        "label": "reads/writes notes",
+        "kind": "data",
+        "optional": false,
+        "description": "Owner-scoped queries against the notes collection: insert on create, paginated find on list, and a deleted_at update on delete."
+      },
+      {
+        "from": "host",
+        "to": "notes-svc",
+        "label": "hosts",
+        "kind": "deploy",
+        "optional": false,
+        "description": "The Express app, its middleware, and both modules run inside one Node process."
+      }
+    ]
+  }
+}
+
+The previous output failed schema validation with these EXACT errors. Return the complete corrected JSON object; fix only these issues:
+- [SCHEMA_INVALID] modules.2.kind: Invalid option: expected one of "model"|"route"|"middleware"|"util"|"config"|"entry"|"test"|"migration"|"template"|"other"
+- [SCHEMA_INVALID] modules.4.kind: Invalid option: expected one of "model"|"route"|"middleware"|"util"|"config"|"entry"|"test"|"migration"|"template"|"other"

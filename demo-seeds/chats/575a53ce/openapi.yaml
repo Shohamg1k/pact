@@ -1,0 +1,62 @@
+openapi: 3.1.0
+info:
+  title: "restaurant-inventory"
+  version: 1.0.0
+paths:
+  /api/items:
+    post:
+      operationId: "API-01"
+      x-feature-id: "F-01"
+      responses:
+        '200':
+          description: OK
+        '401':
+          description: error
+        '409':
+          description: error
+        '422':
+          description: error
+      x-rules:
+        - "BR-01"
+        - "BR-04"
+    get:
+      operationId: "API-02"
+      x-feature-id: "F-02"
+      responses:
+        '200':
+          description: OK
+        '401':
+          description: error
+      x-rules:
+        - "BR-01"
+  "/api/stock-movements":
+    post:
+      operationId: "API-03"
+      x-feature-id: "F-03"
+      responses:
+        '200':
+          description: OK
+        '401':
+          description: error
+        '404':
+          description: error
+        '409':
+          description: error
+        '422':
+          description: error
+      x-rules:
+        - "BR-01"
+        - "BR-02"
+        - "BR-03"
+  "/api/items/low-stock":
+    get:
+      operationId: "API-04"
+      x-feature-id: "F-04"
+      responses:
+        '200':
+          description: OK
+        '401':
+          description: error
+      x-rules:
+        - "BR-01"
+        - "BR-05"

@@ -1,0 +1,618 @@
+You are the QA agent in PACT, an AI operating system for software delivery.
+
+Your ONLY job: read whatever contract, backend, and frontend artifacts you're given and
+produce a single JSON object — a set of test cases exercising the defined features and
+APIs. You GENERATE test cases here; a separate deterministic runner (not you, not a model)
+is responsible for actually executing them against a live server later.
+
+## Output contract
+
+Return ONLY a single JSON object (no prose, no markdown fences) matching exactly this shape:
+
+```json
+{
+  "meta": { "schema": "qa/v1", "chatId": "ignored - the system sets this" },
+  "test_cases": [
+    { "id": "TC-01", "implements": ["API-02", "BR-01"],
+      "description": "Booking a slot with no available copies is rejected",
+      "steps": ["POST /api/bookings with a fully-booked slot_id"],
+      "expected": "409 Conflict, no booking record created" }
+  ],
+  "gaps": []
+}
+```
+
+## Rules — read carefully, these are enforced by a deterministic gate, not by trust
+
+1. **Every test case's `implements[]` must cite at least one real contract id** (a
+   feature/API/business-rule id from what you were given) and can never be empty — a
+   test that exercises nothing isn't a test. Unknown ids are rejected by name.
+2. **Cover the declared error codes**, not just the happy path — every API's `errors[]`
+   and every business rule deserves at least one test case proving it's enforced.
+3. **`steps` are concrete and executable** — an HTTP method + path + what's in the body,
+   not "test the booking flow works."
+4. **`expected` states the observable outcome** — status code, response shape, or a
+   database-visible side effect — not "it should work correctly."
+5. **Don't test what wasn't given.** If frontend artifacts weren't included, don't write
+   UI interaction tests; stick to what you can verify against the API/contract you have.
+
+If you are given GATE ERRORS below, fix ONLY those exact issues.
+
+
+## Contract
+
+{
+  "meta": {
+    "schema": "arch-contract/v1",
+    "id": "personal-notes-api",
+    "completeness_score": 0.62
+  },
+  "stack": {
+    "default": "MERN",
+    "db": "mongodb",
+    "api": "express"
+  },
+  "features": [
+    {
+      "id": "F-01",
+      "name": "User authentication (register, login, session token)",
+      "priority": "must"
+    },
+    {
+      "id": "F-02",
+      "name": "Create a personal note",
+      "priority": "must"
+    },
+    {
+      "id": "F-03",
+      "name": "List own notes",
+      "priority": "must"
+    },
+    {
+      "id": "F-04",
+      "name": "Delete own note",
+      "priority": "must"
+    }
+  ],
+  "assumptions": [
+    {
+      "id": "AS-01",
+      "statement": "\"Personal\" implies per-user ownership and isolation, so the API needs a notion of an authenticated user; the brief never says how users are created or authenticated, so we assume email + password registration with a stateless JWT bearer token.",
+      "confidence": 0.55,
+      "source": "brief-silence"
+    },
+    {
+      "id": "AS-02",
+      "statement": "A note is a title plus a free-text body; the brief names no fields. Title is optional (may be derived/blank), body is required and capped at 10,000 characters.",
+      "confidence": 0.6,
+      "source": "domain-norm"
+    },
+    {
+      "id": "AS-03",
+      "statement": "There is no update/edit endpoint because the brief says only create, list, delete. Editing is deliberately out of scope rather than forgotten.",
+      "confidence": 0.8,
+      "source": "brief-silence"
+    },
+    {
+      "id": "AS-04",
+      "statement": "Delete is a soft delete (deleted_at timestamp) so an accidental delete is recoverable by an operator; the brief does not say whether deletes must be permanent.",
+      "confidence": 0.45,
+      "source": "brief-silence"
+    },
+    {
+      "id": "AS-05",
+      "statement": "Scale is small (\"a small notes API\"): single Express process, single MongoDB, no cache, no queue, no background workers. Listing is paginated at 20 per page to keep responses bounded anyway.",
+      "confidence": 0.7,
+      "source": "brief-silence"
+    },
+    {
+      "id": "AS-06",
+      "statement": "No sharing, collaboration, tags, search, or attachments are in scope — the brief describes only personal notes with three operations.",
+      "confidence": 0.75,
+      "source": "brief-silence"
+    },
+    {
+      "id": "AS-07",
+      "statement": "Passwords are stored as bcrypt hashes (cost 12) and JWTs expire after 24h. The brief specifies no security posture.",
+      "confidence": 0.65,
+      "source": "domain-norm"
+    }
+  ],
+  "business_rules": [
+    "BR-01: Every notes endpoint requires a valid, unexpired bearer token; a missing or invalid token returns 401 and no note data.",
+    "BR-02: A note's owner_id is taken from the authenticated token, never from the request body — a client cannot create a note on behalf of another user.",
+    "BR-03: Read and delete operations must filter by owner_id = authenticated user. A note belonging to another user is reported as 404, not 403, so note ids are not enumerable.",
+    "BR-04: Note body is required, must be 1–10,000 characters after trimming; an empty or oversized body returns 422.",
+    "BR-05: Deleting a note sets deleted_at instead of removing the document (AS-04); deleted notes are excluded from every list response and from subsequent fetch/delete.",
+    "BR-06: Deleting an already-deleted or non-existent note returns 404 and does not change stored state.",
+    "BR-07: Email is unique across users, compared case-insensitively; registering an existing email returns 409.",
+    "BR-08: Login failure returns 401 with an identical message whether the email is unknown or the password is wrong, so accounts cannot be probed.",
+    "BR-09: List returns the caller's notes only, sorted by created_at descending, page size 20, capped at 100 per request."
+  ],
+  "collections": [
+    {
+      "id": "C-01",
+      "name": "users",
+      "fields": [
+        "_id ObjectId primary key",
+        "email string required unique lowercase indexed",
+        "password_hash string required bcrypt",
+        "display_name string optional max 80",
+        "created_at Date required default now"
+      ]
+    },
+    {
+      "id": "C-02",
+      "name": "notes",
+      "fields": [
+        "_id ObjectId primary key",
+        "owner_id ObjectId required ref:users indexed",
+        "title string optional max 200 trimmed",
+        "body string required min 1 max 10000 trimmed",
+        "created_at Date required default now",
+        "updated_at Date required default now",
+        "deleted_at Date nullable default null",
+        "compound index (owner_id, deleted_at, created_at desc)"
+      ]
+    }
+  ],
+  "apis": [
+    {
+      "id": "API-01",
+      "feature_id": "F-01",
+      "method": "POST",
+      "path": "/api/auth/register",
+      "request": {
+        "email": "string required",
+        "password": "string required min 8",
+        "display_name": "string optional"
+      },
+      "response": {
+        "user": {
+          "id": "string",
+          "email": "string",
+          "display_name": "string|null"
+        },
+        "token": "string JWT",
+        "expires_in": 86400
+      },
+      "errors": [
+        409,
+        422
+      ],
+      "rules": [
+        "BR-07",
+        "AS-07"
+      ]
+    },
+    {
+      "id": "API-02",
+      "feature_id": "F-01",
+      "method": "POST",
+      "path": "/api/auth/login",
+      "request": {
+        "email": "string required",
+        "password": "string required"
+      },
+      "response": {
+        "user": {
+          "id": "string",
+          "email": "string"
+        },
+        "token": "string JWT",
+        "expires_in": 86400
+      },
+      "errors": [
+        401,
+        422
+      ],
+      "rules": [
+        "BR-08"
+      ]
+    },
+    {
+      "id": "API-03",
+      "feature_id": "F-02",
+      "method": "POST",
+      "path": "/api/notes",
+      "request": {
+        "title": "string optional max 200",
+        "body": "string required 1..10000"
+      },
+      "response": {
+        "id": "string",
+        "title": "string|null",
+        "body": "string",
+        "created_at": "ISO8601",
+        "updated_at": "ISO8601"
+      },
+      "errors": [
+        401,
+        422
+      ],
+      "rules": [
+        "BR-01",
+        "BR-02",
+        "BR-04"
+      ]
+    },
+    {
+      "id": "API-04",
+      "feature_id": "F-03",
+      "method": "GET",
+      "path": "/api/notes",
+      "request": {
+        "page": "integer optional default 1",
+        "limit": "integer optional default 20 max 100"
+      },
+      "response": {
+        "items": [
+          {
+            "id": "string",
+            "title": "string|null",
+            "body": "string",
+            "created_at": "ISO8601",
+            "updated_at": "ISO8601"
+          }
+        ],
+        "page": 1,
+        "limit": 20,
+        "total": 0
+      },
+      "errors": [
+        401,
+        422
+      ],
+      "rules": [
+        "BR-01",
+        "BR-03",
+        "BR-05",
+        "BR-09"
+      ]
+    },
+    {
+      "id": "API-05",
+      "feature_id": "F-03",
+      "method": "GET",
+      "path": "/api/notes/:id",
+      "request": {},
+      "response": {
+        "id": "string",
+        "title": "string|null",
+        "body": "string",
+        "created_at": "ISO8601",
+        "updated_at": "ISO8601"
+      },
+      "errors": [
+        401,
+        404
+      ],
+      "rules": [
+        "BR-01",
+        "BR-03",
+        "BR-05"
+      ]
+    },
+    {
+      "id": "API-06",
+      "feature_id": "F-04",
+      "method": "DELETE",
+      "path": "/api/notes/:id",
+      "request": {},
+      "response": {
+        "id": "string",
+        "deleted_at": "ISO8601"
+      },
+      "errors": [
+        401,
+        404
+      ],
+      "rules": [
+        "BR-01",
+        "BR-03",
+        "BR-05",
+        "BR-06"
+      ]
+    }
+  ],
+  "diagram": {
+    "groups": [
+      {
+        "id": "clients",
+        "label": "Clients",
+        "lane": "left"
+      },
+      {
+        "id": "platform",
+        "label": "Application platform",
+        "sublabel": "MERN — single Node process",
+        "lane": "main"
+      },
+      {
+        "id": "services",
+        "label": "Express API",
+        "parent": "platform",
+        "lane": "main"
+      },
+      {
+        "id": "data",
+        "label": "Data",
+        "parent": "platform",
+        "lane": "main"
+      },
+      {
+        "id": "external",
+        "label": "External",
+        "lane": "right"
+      }
+    ],
+    "nodes": [
+      {
+        "id": "user",
+        "label": "Note owner",
+        "sublabel": "Authenticated end user",
+        "group": "clients",
+        "icon": "user",
+        "description": "A single person who owns their own notes and sees nobody else's. Every request they make carries a bearer token that decides which notes exist as far as the API is concerned. There are no admin or shared-access roles in this system.",
+        "implements": []
+      },
+      {
+        "id": "web",
+        "label": "Web client",
+        "sublabel": "React SPA",
+        "group": "clients",
+        "icon": "browser",
+        "description": "The React front end that renders the note list and the compose box. It stores the JWT it received at login and attaches it to every /api/notes call. It holds no ownership or validation rules of its own — the server re-checks everything, because a client-side filter is not a security boundary.",
+        "implements": []
+      },
+      {
+        "id": "auth-svc",
+        "label": "Auth module",
+        "sublabel": "F-01 · 2 endpoints",
+        "group": "services",
+        "icon": "auth",
+        "description": "Owns registration and login. Hashes passwords with bcrypt, enforces BR-07 via the unique index on users.email, and returns the same opaque 401 for unknown-email and wrong-password so accounts cannot be probed (BR-08). It mints the 24h JWT that every other route trusts.",
+        "implements": [
+          "F-01",
+          "API-01",
+          "API-02",
+          "C-01"
+        ]
+      },
+      {
+        "id": "auth-mw",
+        "label": "Auth middleware",
+        "sublabel": "BR-01, BR-02",
+        "group": "services",
+        "icon": "lock",
+        "description": "Express middleware in front of every /api/notes route. Verifies the JWT signature and expiry and rejects with 401 before any handler runs (BR-01). It also pins req.user.id as the only source of owner_id, which is what makes BR-02 true by construction rather than by discipline.",
+        "implements": []
+      },
+      {
+        "id": "notes-svc",
+        "label": "Notes service",
+        "sublabel": "F-02, F-03, F-04 · 4 endpoints",
+        "group": "services",
+        "icon": "service",
+        "description": "The whole notes domain: create, list, fetch one, soft-delete. Validates body length (BR-04), scopes every query to the caller's owner_id and returns 404 rather than 403 for someone else's note (BR-03), and implements delete as a deleted_at stamp so the row survives an accidental click (BR-05, BR-06). Listing is always paginated (BR-09).",
+        "implements": [
+          "F-02",
+          "F-03",
+          "F-04",
+          "API-03",
+          "API-04",
+          "API-05",
+          "API-06"
+        ]
+      },
+      {
+        "id": "db",
+        "label": "MongoDB",
+        "sublabel": "C-01 users · C-02 notes",
+        "group": "data",
+        "icon": "database",
+        "description": "Single MongoDB instance holding users and notes. A unique index on users.email enforces BR-07 under concurrency, and a compound index on (owner_id, deleted_at, created_at) keeps the per-user list query covered and cheap. Soft-deleted notes stay here with deleted_at set and are filtered out at query time.",
+        "implements": [
+          "C-01",
+          "C-02"
+        ]
+      },
+      {
+        "id": "host",
+        "label": "Node runtime host",
+        "sublabel": "single process, no worker tier",
+        "group": "platform",
+        "icon": "server",
+        "description": "One Node.js process serving the Express app; there is no queue, cache, or background worker because the brief describes a small system (AS-05). Scaling, if ever needed, is horizontal behind a load balancer since the JWT makes the API stateless.",
+        "implements": []
+      }
+    ],
+    "edges": [
+      {
+        "from": "user",
+        "to": "web",
+        "label": "uses",
+        "kind": "request",
+        "optional": false,
+        "description": "The person writes, reads, and deletes notes through the SPA. No direct API access is assumed."
+      },
+      {
+        "from": "web",
+        "to": "auth-svc",
+        "label": "HTTPS",
+        "kind": "auth",
+        "optional": false,
+        "description": "POST /api/auth/register and /api/auth/login over HTTPS. Returns a JWT and its expiry; the client replays that token on every later call."
+      },
+      {
+        "from": "web",
+        "to": "auth-mw",
+        "label": "HTTPS + Bearer",
+        "kind": "request",
+        "optional": false,
+        "description": "All note traffic enters here carrying an Authorization: Bearer header. A missing or expired token is refused with 401 and never reaches the notes handlers."
+      },
+      {
+        "from": "auth-mw",
+        "to": "notes-svc",
+        "label": "verified req.user",
+        "kind": "request",
+        "optional": false,
+        "description": "Only requests with a valid token continue, with the caller's user id attached. This attached id — not anything in the request body — becomes owner_id on writes and the filter on reads."
+      },
+      {
+        "from": "auth-svc",
+        "to": "db",
+        "label": "reads/writes users",
+        "kind": "data",
+        "optional": false,
+        "description": "Inserts new user documents and reads a single user by lowercased email to verify the password hash."
+      },
+      {
+        "from": "notes-svc",
+        "to": "db",
+        "label": "reads/writes notes",
+        "kind": "data",
+        "optional": false,
+        "description": "Owner-scoped queries against the notes collection: insert on create, paginated find on list, and a deleted_at update on delete."
+      },
+      {
+        "from": "host",
+        "to": "notes-svc",
+        "label": "hosts",
+        "kind": "deploy",
+        "optional": false,
+        "description": "The Express app, its middleware, and both modules run inside one Node process."
+      }
+    ]
+  }
+}
+
+## Backend
+
+{
+  "meta": {
+    "schema": "backend/v1",
+    "runId": "f79ac574",
+    "contractHash": "sha256:fadf4d1ddd59a9ffce933f9f8a664604c24cf29c2f0ed8e38aaa7e5ebc966ba2"
+  },
+  "modules": [
+    {
+      "path": "models/User.js",
+      "kind": "model",
+      "implements": [
+        "C-01",
+        "F-01"
+      ],
+      "code": "const mongoose = require('mongoose');\n\n// C-01 users\nconst userSchema = new mongoose.Schema(\n  {\n    email: {\n      type: String,\n      required: true,\n      unique: true,\n      lowercase: true,\n      trim: true,\n      index: true\n    },\n    password_hash: { type: String, required: true },\n    display_name: {\n      type: String,\n      required: false,\n      default: null,\n      maxlength: 80,\n      trim: true\n    },\n    created_at: { type: Date, required: true, default: Date.now }\n  },\n  { versionKey: false }\n);\n\n// BR-07: uniqueness is enforced by the database as well as by the handler, so a\n// race between two concurrent registrations still ends in exactly one account.\nuserSchema.index({ email: 1 }, { unique: true });\n\nuserSchema.methods.toPublic = function toPublic() {\n  return {\n    id: String(this._id),\n    email: this.email,\n    display_name: this.display_name === undefined ? null : this.display_name\n  };\n};\n\nmodule.exports = mongoose.models.users || mongoose.model('users', userSchema, 'users');\n",
+      "language": "js"
+    },
+    {
+      "path": "models/Note.js",
+      "kind": "model",
+      "implements": [
+        "C-02",
+        "F-02",
+        "F-03",
+        "F-04"
+      ],
+      "code": "const mongoose = require('mongoose');\n\n// C-02 notes\nconst noteSchema = new mongoose.Schema(\n  {\n    owner_id: {\n      type: mongoose.Schema.Types.ObjectId,\n      required: true,\n      ref: 'users',\n      index: true\n    },\n    title: {\n      type: String,\n      required: false,\n      default: null,\n      maxlength: 200,\n      trim: true\n    },\n    body: {\n      type: String,\n      required: true,\n      minlength: 1,\n      maxlength: 10000,\n      trim: true\n    },\n    created_at: { type: Date, required: true, default: Date.now },\n    updated_at: { type: Date, required: true, default: Date.now },\n    deleted_at: { type: Date, default: null }\n  },\n  { versionKey: false }\n);\n\n// Covers the only read pattern this API has: one owner's live notes, newest first.\nnoteSchema.index({ owner_id: 1, deleted_at: 1, created_at: -1 });\n\n// BR-03 + BR-05 expressed once, so no handler can forget either half of it.\nnoteSchema.statics.liveFilter = function liveFilter(ownerId, extra) {\n  return Object.assign({ owner_id: ownerId, deleted_at: null }, extra || {});\n};\n\nnoteSchema.methods.toPublic = function toPublic() {\n  return {\n    id: String(this._id),\n    title: this.title === undefined ? null : this.title,\n    body: this.body,\n    created_at: new Date(this.created_at).toISOString(),\n    updated_at: new Date(this.updated_at).toISOString()\n  };\n};\n\nmodule.exports = mongoose.models.notes || mongoose.model('notes', noteSchema, 'notes');\n",
+      "language": "js"
+    },
+    {
+      "path": "utils/token.js",
+      "kind": "util",
+      "implements": [
+        "BR-01",
+        "F-01"
+      ],
+      "code": "const jwt = require('jsonwebtoken');\n\n// BR-01: tokens are stateless and expire; 24h per the contract's expires_in.\nconst TOKEN_TTL_SECONDS = 86400;\n\nfunction secret() {\n  return process.env.JWT_SECRET || 'pact-local-development-secret';\n}\n\nfunction signToken(userId) {\n  return jwt.sign({ sub: String(userId) }, secret(), { expiresIn: TOKEN_TTL_SECONDS });\n}\n\nfunction verifyToken(token) {\n  return jwt.verify(token, secret());\n}\n\nmodule.exports = { signToken, verifyToken, TOKEN_TTL_SECONDS };\n",
+      "language": "js"
+    },
+    {
+      "path": "utils/validate.js",
+      "kind": "util",
+      "implements": [
+        "BR-04",
+        "BR-09",
+        "BR-07"
+      ],
+      "code": "const MAX_BODY = 10000;\nconst MAX_TITLE = 200;\nconst MIN_PASSWORD = 8;\nconst MAX_PASSWORD = 200;\nconst MAX_DISPLAY_NAME = 80;\nconst DEFAULT_PAGE_SIZE = 20;\nconst MAX_PAGE_SIZE = 100;\n\nconst EMAIL_RE = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;\n\nfunction asString(value) {\n  return typeof value === 'string' ? value : null;\n}\n\nfunction fail(errors, field, message) {\n  errors.push({ field: field, message: message });\n  return null;\n}\n\n// BR-07: email is normalised to lowercase here, which is what makes the unique\n// index a case-insensitive uniqueness check.\nfunction validateEmail(value, errors) {\n  const raw = asString(value);\n  if (raw === null || raw.trim() === '') {\n    return fail(errors, 'email', 'email is required');\n  }\n  const email = raw.trim().toLowerCase();\n  if (email.length > 254 || !EMAIL_RE.test(email)) {\n    return fail(errors, 'email', 'email must be a valid address');\n  }\n  return email;\n}\n\nfunction validatePassword(value, errors, options) {\n  const enforceLength = !options || options.enforceLength !== false;\n  const raw = asString(value);\n  if (raw === null || raw === '') {\n    return fail(errors, 'password', 'password is required');\n  }\n  if (enforceLength && raw.length < MIN_PASSWORD) {\n    return fail(errors, 'password', 'password must be at least ' + MIN_PASSWORD + ' characters');\n  }\n  if (raw.length > MAX_PASSWORD) {\n    return fail(errors, 'password', 'password must be at most ' + MAX_PASSWORD + ' characters');\n  }\n  return raw;\n}\n\nfunction validateDisplayName(value, errors) {\n  if (value === undefined || value === null) return null;\n  const raw = asString(value);\n  if (raw === null) {\n    return fail(errors, 'display_name', 'display_name must be a string');\n  }\n  const trimmed = raw.trim();\n  if (trimmed === '') return null;\n  if (trimmed.length > MAX_DISPLAY_NAME) {\n    return fail(errors, 'display_name', 'display_name must be at most ' + MAX_DISPLAY_NAME + ' characters');\n  }\n  return trimmed;\n}\n\nfunction validateTitle(value, errors) {\n  if (value === undefined || value === null) return null;\n  const raw = asString(value);\n  if (raw === null) {\n    return fail(errors, 'title', 'title must be a string');\n  }\n  const trimmed = raw.trim();\n  if (trimmed === '') return null;\n  if (trimmed.length > MAX_TITLE) {\n    return fail(errors, 'title', 'title must be at most ' + MAX_TITLE + ' characters');\n  }\n  return trimmed;\n}\n\n// BR-04: body required, 1..10000 characters measured after trimming.\nfunction validateBody(value, errors) {\n  const raw = asString(value);\n  if (raw === null) {\n    return fail(errors, 'body', 'body is required and must be a string');\n  }\n  const trimmed = raw.trim();\n  if (trimmed.length < 1) {\n    return fail(errors, 'body', 'body must not be empty');\n  }\n  if (trimmed.length > MAX_BODY) {\n    return fail(errors, 'body', 'body must be at most ' + MAX_BODY + ' characters');\n  }\n  return trimmed;\n}\n\nfunction parsePositiveInteger(raw, field, fallback, min, max, errors) {\n  if (raw === undefined || raw === null || raw === '') return fallback;\n  const candidate = String(Array.isArray(raw) ? raw[0] : raw).trim();\n  if (!/^\\d+$/.test(candidate)) {\n    fail(errors, field, field + ' must be a positive integer');\n    return fallback;\n  }\n  const parsed = Number(candidate);\n  if (parsed < min || parsed > max) {\n    fail(errors, field, field + ' must be between ' + min + ' and ' + max);\n    return fallback;\n  }\n  return parsed;\n}\n\n// BR-09: page size defaults to 20 and is hard-capped at 100.\nfunction validatePagination(query, errors) {\n  const source = query && typeof query === 'object' ? query : {};\n  const page = parsePositiveInteger(source.page, 'page', 1, 1, 1000000, errors);\n  const limit = parsePositiveInteger(source.limit, 'limit', DEFAULT_PAGE_SIZE, 1, MAX_PAGE_SIZE, errors);\n  return { page: page, limit: limit };\n}\n\nmodule.exports = {\n  MAX_BODY: MAX_BODY,\n  MAX_TITLE: MAX_TITLE,\n  MIN_PASSWORD: MIN_PASSWORD,\n  DEFAULT_PAGE_SIZE: DEFAULT_PAGE_SIZE,\n  MAX_PAGE_SIZE: MAX_PAGE_SIZE,\n  validateEmail: validateEmail,\n  validatePassword: validatePassword,\n  validateDisplayName: validateDisplayName,\n  validateTitle: validateTitle,\n  validateBody: validateBody,\n  validatePagination: validatePagination\n};\n",
+      "language": "js"
+    },
+    {
+      "path": "middleware/auth.js",
+      "kind": "middleware",
+      "implements": [
+        "BR-01",
+        "BR-02"
+      ],
+      "code": "const mongoose = require('mongoose');\nconst { verifyToken } = require('../utils/token');\n\nfunction unauthorized(res) {\n  // BR-01: one shape of 401, and never any note data alongside it.\n  return res.status(401).json({\n    error: 'unauthorized',\n    message: 'A valid bearer token is required.'\n  });\n}\n\n// BR-01 + BR-02. Runs in front of every /api/notes route: an invalid or expired\n// token is refused before a handler sees the request, and the caller's id is\n// pinned onto req.user so owner_id can only ever come from the token.\nfunction requireAuth(req, res, next) {\n  const header = req.get('authorization') || '';\n  const match = /^Bearer\\s+(.+)$/i.exec(header.trim());\n  if (!match) {\n    return unauthorized(res);\n  }\n\n  let payload;\n  try {\n    payload = verifyToken(match[1].trim());\n  } catch (err) {\n    return unauthorized(res);\n  }\n\n  if (!payload || !payload.sub || !mongoose.isValidObjectId(String(payload.sub))) {\n    return unauthorized(res);\n  }\n\n  req.user = { id: String(payload.sub) };\n  return next();\n}\n\nmodule.exports = requireAuth;\n",
+      "language": "js"
+    },
+    {
+      "path": "routes/auth.js",
+      "kind": "route",
+      "implements": [
+        "API-01",
+        "API-02",
+        "F-01",
+        "C-01",
+        "BR-07",
+        "BR-08"
+      ],
+      "code": "const express = require('express');\nconst bcrypt = require('bcryptjs');\nconst User = require('../models/User');\nconst { signToken, TOKEN_TTL_SECONDS } = require('../utils/token');\nconst {\n  validateEmail,\n  validatePassword,\n  validateDisplayName\n} = require('../utils/validate');\n\nconst router = express.Router();\nconst BCRYPT_COST = 12;\n\nfunction payloadOf(req) {\n  return req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};\n}\n\nfunction unprocessable(res, details) {\n  return res.status(422).json({ error: 'unprocessable_entity', details: details });\n}\n\n// API-01 POST /api/auth/register\nrouter.post('/api/auth/register', async (req, res, next) => {\n  try {\n    const payload = payloadOf(req);\n    const errors = [];\n    const email = validateEmail(payload.email, errors);\n    const password = validatePassword(payload.password, errors);\n    const displayName = validateDisplayName(payload.display_name, errors);\n    if (errors.length > 0) {\n      return unprocessable(res, errors);\n    }\n\n    // BR-07: an already-registered email is a 409, compared case-insensitively\n    // because validateEmail lowercased it.\n    const existing = await User.findOne({ email: email }).select({ _id: 1 });\n    if (existing) {\n      return res.status(409).json({\n        error: 'email_already_registered',\n        message: 'That email is already registered.'\n      });\n    }\n\n    const passwordHash = await bcrypt.hash(password, BCRYPT_COST);\n\n    let user;\n    try {\n      user = await User.create({\n        email: email,\n        password_hash: passwordHash,\n        display_name: displayName,\n        created_at: new Date()\n      });\n    } catch (err) {\n      // BR-07 again, this time losing the race against a concurrent registration.\n      if (err && err.code === 11000) {\n        return res.status(409).json({\n          error: 'email_already_registered',\n          message: 'That email is already registered.'\n        });\n      }\n      throw err;\n    }\n\n    return res.status(201).json({\n      user: user.toPublic(),\n      token: signToken(user._id),\n      expires_in: TOKEN_TTL_SECONDS\n    });\n  } catch (err) {\n    return next(err);\n  }\n});\n\n// API-02 POST /api/auth/login\nrouter.post('/api/auth/login', async (req, res, next) => {\n  try {\n    const payload = payloadOf(req);\n    const errors = [];\n    // Length rules are not enforced on login: an old password that predates a\n    // policy change must still be able to sign in, and rejecting on length here\n    // would leak which passwords are plausible.\n    const email = validateEmail(payload.email, errors);\n    const password = validatePassword(payload.password, errors, { enforceLength: false });\n    if (errors.length > 0) {\n      return unprocessable(res, errors);\n    }\n\n    const user = await User.findOne({ email: email });\n\n    // BR-08: unknown email and wrong password must be indistinguishable, in both\n    // the response body and — via the dummy compare — in response time.\n    const storedHash = user ? user.password_hash : '$2a$12$invalidinvalidinvalidinvalidinvalidinvalidinvalidinvaliduu';\n    const passwordMatches = await bcrypt.compare(password, storedHash);\n    if (!user || !passwordMatches) {\n      return res.status(401).json({\n        error: 'invalid_credentials',\n        message: 'Email or password is incorrect.'\n      });\n    }\n\n    return res.status(200).json({\n      user: { id: String(user._id), email: user.email },\n      token: signToken(user._id),\n      expires_in: TOKEN_TTL_SECONDS\n    });\n  } catch (err) {\n    return next(err);\n  }\n});\n\nmodule.exports = router;\n",
+      "language": "js"
+    },
+    {
+      "path": "routes/notes.js",
+      "kind": "route",
+      "implements": [
+        "API-03",
+        "API-04",
+        "API-05",
+        "API-06",
+        "F-02",
+        "F-03",
+        "F-04",
+        "C-02",
+        "BR-01",
+        "BR-02",
+        "BR-03",
+        "BR-04",
+        "BR-05",
+        "BR-06",
+        "BR-09"
+      ],
+      "code": "const express = require('express');\nconst mongoose = require('mongoose');\nconst Note = require('../models/Note');\nconst requireAuth = require('../middleware/auth');\nconst { validateTitle, validateBody, validatePagination } = require('../utils/validate');\n\nconst router = express.Router();\n\nfunction payloadOf(req) {\n  return req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};\n}\n\nfunction unprocessable(res, details) {\n  return res.status(422).json({ error: 'unprocessable_entity', details: details });\n}\n\n// BR-03 + BR-05 + BR-06: someone else's note, an already-deleted note, a\n// malformed id and a note that never existed all look the same from outside, so\n// note ids stay non-enumerable.\nfunction notFound(res) {\n  return res.status(404).json({ error: 'not_found', message: 'Note not found.' });\n}\n\nfunction noteIdOf(raw) {\n  return mongoose.isValidObjectId(raw) ? new mongoose.Types.ObjectId(String(raw)) : null;\n}\n\n// API-03 POST /api/notes\nrouter.post('/api/notes', requireAuth, async (req, res, next) => {\n  try {\n    const payload = payloadOf(req);\n    const errors = [];\n    const title = validateTitle(payload.title, errors);\n    const body = validateBody(payload.body, errors);\n    // BR-04: empty or oversized body never reaches the database.\n    if (errors.length > 0) {\n      return unprocessable(res, errors);\n    }\n\n    const now = new Date();\n    const note = await Note.create({\n      // BR-02: owner_id comes from the verified token. Any owner_id in the\n      // request body is simply not read.\n      owner_id: req.user.id,\n      title: title,\n      body: body,\n      created_at: now,\n      updated_at: now,\n      deleted_at: null\n    });\n\n    return res.status(201).json(note.toPublic());\n  } catch (err) {\n    return next(err);\n  }\n});\n\n// API-04 GET /api/notes\nrouter.get('/api/notes', requireAuth, async (req, res, next) => {\n  try {\n    const errors = [];\n    const paging = validatePagination(req.query, errors);\n    // BR-09: a page or limit outside the allowed range is a 422, not a silent clamp.\n    if (errors.length > 0) {\n      return unprocessable(res, errors);\n    }\n\n    // BR-03 + BR-05: the caller's own, non-deleted notes only.\n    const filter = Note.liveFilter(req.user.id);\n    const results = await Promise.all([\n      Note.find(filter)\n        .sort({ created_at: -1 })\n        .skip((paging.page - 1) * paging.limit)\n        .limit(paging.limit),\n      Note.countDocuments(filter)\n    ]);\n\n    return res.status(200).json({\n      items: results[0].map(function (note) { return note.toPublic(); }),\n      page: paging.page,\n      limit: paging.limit,\n      total: results[1]\n    });\n  } catch (err) {\n    return next(err);\n  }\n});\n\n// API-05 GET /api/notes/:id\nrouter.get('/api/notes/:id', requireAuth, async (req, res, next) => {\n  try {\n    const id = noteIdOf(req.params.id);\n    if (!id) {\n      return notFound(res);\n    }\n\n    // BR-03 + BR-05 in the query itself, so an ownership check can't be skipped.\n    const note = await Note.findOne(Note.liveFilter(req.user.id, { _id: id }));\n    if (!note) {\n      return notFound(res);\n    }\n\n    return res.status(200).json(note.toPublic());\n  } catch (err) {\n    return next(err);\n  }\n});\n\n// API-06 DELETE /api/notes/:id\nrouter.delete('/api/notes/:id', requireAuth, async (req, res, next) => {\n  try {\n    const id = noteIdOf(req.params.id);\n    if (!id) {\n      return notFound(res);\n    }\n\n    const deletedAt = new Date();\n    // BR-05: soft delete. BR-06: the deleted_at: null in the filter means an\n    // already-deleted note matches nothing, so no write happens and the stored\n    // deleted_at timestamp is never overwritten.\n    const note = await Note.findOneAndUpdate(\n      Note.liveFilter(req.user.id, { _id: id }),\n      { $set: { deleted_at: deletedAt, updated_at: deletedAt } },\n      { new: true }\n    );\n\n    if (!note) {\n      return notFound(res);\n    }\n\n    return res.status(200).json({\n      id: String(note._id),\n      deleted_at: new Date(note.deleted_at).toISOString()\n    });\n  } catch (err) {\n    return next(err);\n  }\n});\n\nmodule.exports = router;\n",
+      "language": "js"
+    },
+    {
+      "path": "server.js",
+      "kind": "entry",
+      "implements": [
+        "API-01",
+        "API-02",
+        "API-03",
+        "API-04",
+        "API-05",
+        "API-06",
+        "C-01",
+        "C-02"
+      ],
+      "code": "const express = require('express');\nconst mongoose = require('mongoose');\nconst authRoutes = require('./routes/auth');\nconst noteRoutes = require('./routes/notes');\n\nconst app = express();\napp.disable('x-powered-by');\napp.use(express.json({ limit: '256kb' }));\n\n// API-01, API-02\napp.use(authRoutes);\n// API-03, API-04, API-05, API-06\napp.use(noteRoutes);\n\napp.use(function (req, res) {\n  res.status(404).json({ error: 'not_found', message: 'No such endpoint.' });\n});\n\n// eslint-disable-next-line no-unused-vars\napp.use(function (err, req, res, next) {\n  if (err && (err.type === 'entity.parse.failed' || err instanceof SyntaxError)) {\n    return res.status(422).json({\n      error: 'unprocessable_entity',\n      details: [{ field: 'body', message: 'Request body must be valid JSON.' }]\n    });\n  }\n  if (err && err.name === 'ValidationError') {\n    return res.status(422).json({\n      error: 'unprocessable_entity',\n      details: Object.keys(err.errors || {}).map(function (field) {\n        return { field: field, message: err.errors[field].message };\n      })\n    });\n  }\n  if (err && err.code === 11000) {\n    return res.status(409).json({ error: 'conflict', message: 'Resource already exists.' });\n  }\n  console.error('[api] unhandled error:', err);\n  return res.status(500).json({ error: 'internal_error' });\n});\n\nconst PORT = Number(process.env.PORT || 3000);\nconst MONGO_URL = process.env.MONGO_URL;\n\nasync function start() {\n  if (!MONGO_URL) {\n    throw new Error('MONGO_URL is not set');\n  }\n  await mongoose.connect(MONGO_URL);\n  console.log('[api] connected to MongoDB');\n  return app.listen(PORT, function () {\n    console.log('[api] listening on port ' + PORT);\n  });\n}\n\nif (require.main === module) {\n  start().catch(function (err) {\n    console.error('[api] failed to start:', err.message);\n    process.exit(1);\n  });\n}\n\nmodule.exports = { app: app, start: start };\n",
+      "language": "js"
+    }
+  ],
+  "server_entry": "server.js",
+  "package_json": {
+    "name": "personal-notes-api",
+    "dependencies": {
+      "express": "^5.1.0",
+      "mongoose": "^8.9.5",
+      "bcryptjs": "^2.4.3",
+      "jsonwebtoken": "^9.0.2"
+    }
+  },
+  "gaps": []
+}

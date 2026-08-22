@@ -1,0 +1,35 @@
+{
+  "schema": "schema.mongo/v1",
+  "collections": [
+    {
+      "id": "C-01",
+      "name": "employees",
+      "fields": [
+        "_id ObjectId primary key",
+        "name string required",
+        "email string required unique lowercase indexed",
+        "role string required enum(employee,manager)",
+        "manager_id ObjectId nullable ref:employees indexed",
+        "leave_balance_days number required default 20",
+        "created_at Date required default now"
+      ]
+    },
+    {
+      "id": "C-02",
+      "name": "leave_requests",
+      "fields": [
+        "_id ObjectId primary key",
+        "employee_id ObjectId required ref:employees indexed",
+        "manager_id ObjectId required ref:employees indexed",
+        "start_date Date required",
+        "end_date Date required",
+        "days number required computed-from(start_date,end_date)",
+        "reason string required max 500",
+        "status string required enum(pending,approved,rejected) default pending indexed",
+        "decided_at Date nullable default null",
+        "created_at Date required default now",
+        "compound index (manager_id, status, created_at desc)"
+      ]
+    }
+  ]
+}

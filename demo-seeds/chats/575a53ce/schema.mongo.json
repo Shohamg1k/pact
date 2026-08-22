@@ -1,0 +1,29 @@
+{
+  "schema": "schema.mongo/v1",
+  "collections": [
+    {
+      "id": "C-01",
+      "name": "items",
+      "fields": [
+        "_id ObjectId primary key",
+        "name string required unique lowercase indexed",
+        "unit string required (e.g. kg, l, count)",
+        "current_stock number required default 0",
+        "reorder_threshold number required default 0",
+        "created_at Date required default now"
+      ]
+    },
+    {
+      "id": "C-02",
+      "name": "stock_movements",
+      "fields": [
+        "_id ObjectId primary key",
+        "item_id ObjectId required ref:items indexed",
+        "type string required enum(in,out)",
+        "quantity number required min 0.01",
+        "note string optional max 300",
+        "created_at Date required default now indexed"
+      ]
+    }
+  ]
+}

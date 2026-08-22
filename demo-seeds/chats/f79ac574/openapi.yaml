@@ -1,0 +1,92 @@
+openapi: 3.1.0
+info:
+  title: "personal-notes-api"
+  version: 1.0.0
+paths:
+  /api/auth/register:
+    post:
+      operationId: "API-01"
+      x-feature-id: "F-01"
+      responses:
+        '200':
+          description: OK
+        '409':
+          description: error
+        '422':
+          description: error
+      x-rules:
+        - "BR-07"
+        - "AS-07"
+  /api/auth/login:
+    post:
+      operationId: "API-02"
+      x-feature-id: "F-01"
+      responses:
+        '200':
+          description: OK
+        '401':
+          description: error
+        '422':
+          description: error
+      x-rules:
+        - "BR-08"
+  /api/notes:
+    post:
+      operationId: "API-03"
+      x-feature-id: "F-02"
+      responses:
+        '200':
+          description: OK
+        '401':
+          description: error
+        '422':
+          description: error
+      x-rules:
+        - "BR-01"
+        - "BR-02"
+        - "BR-04"
+    get:
+      operationId: "API-04"
+      x-feature-id: "F-03"
+      responses:
+        '200':
+          description: OK
+        '401':
+          description: error
+        '422':
+          description: error
+      x-rules:
+        - "BR-01"
+        - "BR-03"
+        - "BR-05"
+        - "BR-09"
+  "/api/notes/:id":
+    get:
+      operationId: "API-05"
+      x-feature-id: "F-03"
+      responses:
+        '200':
+          description: OK
+        '401':
+          description: error
+        '404':
+          description: error
+      x-rules:
+        - "BR-01"
+        - "BR-03"
+        - "BR-05"
+    delete:
+      operationId: "API-06"
+      x-feature-id: "F-04"
+      responses:
+        '200':
+          description: OK
+        '401':
+          description: error
+        '404':
+          description: error
+      x-rules:
+        - "BR-01"
+        - "BR-03"
+        - "BR-05"
+        - "BR-06"
